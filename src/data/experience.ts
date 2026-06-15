@@ -133,6 +133,7 @@ export const mockLessons: LessonLearned[] = [
 
 export const outageComparisonData = [
   {
+    outageId: 'outage-h03',
     outageName: '2020年第5次大修',
     duration: 52,
     totalDose: 685.2,
@@ -142,6 +143,7 @@ export const outageComparisonData = [
     cost: 12500,
   },
   {
+    outageId: 'outage-h02',
     outageName: '2022年第6次大修',
     duration: 48,
     totalDose: 612.8,
@@ -151,6 +153,7 @@ export const outageComparisonData = [
     cost: 13200,
   },
   {
+    outageId: 'outage-h01',
     outageName: '2024年第7次大修',
     duration: 47,
     totalDose: 545.6,
@@ -160,6 +163,7 @@ export const outageComparisonData = [
     cost: 12800,
   },
   {
+    outageId: 'outage-001',
     outageName: '2026年第8次大修(进行中)',
     duration: 45,
     totalDose: 525.8,

@@ -37,13 +37,16 @@ export const Quality: React.FC = () => {
   const {
     checks,
     trendData,
-    statistics,
     getChecksByType,
     getChecksByPoint,
     getChecksByStatus,
     getPendingChecks,
+    getStatistics,
     updateCheckStatus
   } = useQualityStore();
+  
+  const statistics = useMemo(() => getStatistics(), [checks, getStatistics]);
+  const pendingChecks = useMemo(() => getPendingChecks(), [checks, getPendingChecks]);
 
   const [activeTab, setActiveTab] = useState<TabMode>('checks');
   const [typeFilter, setTypeFilter] = useState<FilterType>('all');
@@ -64,8 +67,6 @@ export const Quality: React.FC = () => {
       return matchType && matchPoint && matchStatus && matchSearch;
     });
   }, [checks, typeFilter, pointFilter, statusFilter, searchQuery]);
-
-  const pendingChecks = getPendingChecks();
 
   const getCheckTypeLabel = (type: string) => {
     const labels: Record<string, string> = {

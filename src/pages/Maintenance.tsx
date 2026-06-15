@@ -129,6 +129,56 @@ export const Maintenance: React.FC = () => {
     return colors[status] || 'bg-gray-100 text-gray-700';
   };
 
+  const parseValue = (str: string): number | null => {
+    const match = str.match(/[\d.]+/);
+    return match ? parseFloat(match[0]) : null;
+  };
+
+  const checkMeasurementStatus = (value: string, standard: string): 'normal' | 'abnormal' | 'unknown' => {
+    if (!value || !standard) return 'unknown';
+    
+    const numValue = parseValue(value);
+    if (numValue === null) return 'unknown';
+    
+    const cleanStandard = standard.trim();
+    
+    if (cleanStandard.startsWith('≥') || cleanStandard.startsWith('>=')) {
+      const minVal = parseValue(cleanStandard.substring(1));
+      if (minVal !== null) return numValue >= minVal ? 'normal' : 'abnormal';
+    } else if (cleanStandard.startsWith('≤') || cleanStandard.startsWith('<=')) {
+      const maxVal = parseValue(cleanStandard.substring(1));
+      if (maxVal !== null) return numValue <= maxVal ? 'normal' : 'abnormal';
+    } else if (cleanStandard.startsWith('>')) {
+      const minVal = parseValue(cleanStandard.substring(1));
+      if (minVal !== null) return numValue > minVal ? 'normal' : 'abnormal';
+    } else if (cleanStandard.startsWith('<')) {
+      const maxVal = parseValue(cleanStandard.substring(1));
+      if (maxVal !== null) return numValue < maxVal ? 'normal' : 'abnormal';
+    } else if (cleanStandard.includes('~') || cleanStandard.includes('-')) {
+      const separator = cleanStandard.includes('~') ? '~' : '-';
+      const parts = cleanStandard.split(separator);
+      if (parts.length === 2) {
+        const minVal = parseValue(parts[0]);
+        const maxVal = parseValue(parts[1]);
+        if (minVal !== null && maxVal !== null) {
+          return numValue >= minVal && numValue <= maxVal ? 'normal' : 'abnormal';
+        }
+      }
+    } else {
+      const exactVal = parseValue(cleanStandard);
+      if (exactVal !== null) {
+        return Math.abs(numValue - exactVal) < 0.001 ? 'normal' : 'abnormal';
+      }
+    }
+    
+    const stdNum = parseValue(standard);
+    if (stdNum !== null) {
+      return numValue >= stdNum ? 'normal' : 'abnormal';
+    }
+    
+    return 'unknown';
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -574,23 +624,30 @@ export const Maintenance: React.FC = () => {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {selectedRecord.measurements.map((m, idx) => {
-                          const isWithinRange = m.value !== '' && m.standard !== '';
+                          const status = checkMeasurementStatus(m.value, m.standard);
                           return (
-                            <tr key={idx}>
+                            <tr key={idx} className={status === 'abnormal' ? 'bg-red-50' : ''}>
                               <td className="px-3 py-2 text-sm text-gray-800">{m.name}</td>
-                              <td className="px-3 py-2 text-sm font-medium text-gray-800">{m.value}</td>
+                              <td className={`px-3 py-2 text-sm font-medium ${status === 'abnormal' ? 'text-red-600' : 'text-gray-800'}`}>
+                                {m.value}
+                              </td>
                               <td className="px-3 py-2 text-sm text-gray-600">{m.unit}</td>
                               <td className="px-3 py-2 text-sm text-gray-600">{m.standard}</td>
                               <td className="px-3 py-2">
-                                {isWithinRange ? (
+                                {status === 'normal' ? (
                                   <span className="inline-flex items-center gap-1 text-green-600 text-sm">
                                     <CheckCircle size={14} />
                                     合格
                                   </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-red-600 text-sm">
+                                ) : status === 'abnormal' ? (
+                                  <span className="inline-flex items-center gap-1 text-red-600 text-sm font-medium">
                                     <AlertTriangle size={14} />
                                     异常
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-gray-400 text-sm">
+                                    <AlertCircle size={14} />
+                                    待判定
                                   </span>
                                 )}
                               </td>

@@ -44,6 +44,7 @@ export const Schedule: React.FC = () => {
     endDate: '',
     description: ''
   });
+  const [dateError, setDateError] = useState<string | null>(null);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
 
   const filteredTasks = useMemo(() => {
@@ -69,21 +70,55 @@ export const Schedule: React.FC = () => {
       endDate: task.endDate,
       description: task.description
     });
+    setDateError(null);
+  };
+
+  const validateDates = (startDate: string, endDate: string): string | null => {
+    if (!startDate || !endDate) {
+      return '请填写完整的开始和结束日期';
+    }
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (end < start) {
+      return '结束日期不能早于开始日期';
+    }
+    return null;
   };
 
   const handleSaveEdit = () => {
     if (editingTask) {
+      const error = validateDates(editForm.startDate, editForm.endDate);
+      if (error) {
+        setDateError(error);
+        return;
+      }
       const duration = getDaysDiff(editForm.startDate, editForm.endDate) + 1;
+      if (duration < 1) {
+        setDateError('工期至少为1天');
+        return;
+      }
       updateTask(editingTask.id, {
         ...editForm,
         duration
       });
       setEditingTask(null);
+      setDateError(null);
     }
   };
 
   const handleCancelEdit = () => {
     setEditingTask(null);
+    setDateError(null);
+  };
+
+  const handleDateChange = (field: 'startDate' | 'endDate', value: string) => {
+    const newForm = { ...editForm, [field]: value };
+    setEditForm(newForm);
+    const error = validateDates(
+      field === 'startDate' ? value : editForm.startDate,
+      field === 'endDate' ? value : editForm.endDate
+    );
+    setDateError(error);
   };
 
   const toggleTaskExpand = (taskId: string) => {
@@ -268,19 +303,27 @@ export const Schedule: React.FC = () => {
                       </td>
                       <td className="px-4 py-3">
                         {editingTask?.id === task.id ? (
-                          <div className="flex gap-2">
-                            <input
-                              type="date"
-                              value={editForm.startDate}
-                              onChange={(e) => setEditForm({ ...editForm, startDate: e.target.value })}
-                              className="px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#0D47A1] text-sm"
-                            />
-                            <input
-                              type="date"
-                              value={editForm.endDate}
-                              onChange={(e) => setEditForm({ ...editForm, endDate: e.target.value })}
-                              className="px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#0D47A1] text-sm"
-                            />
+                          <div className="space-y-1">
+                            <div className="flex gap-2">
+                              <input
+                                type="date"
+                                value={editForm.startDate}
+                                onChange={(e) => handleDateChange('startDate', e.target.value)}
+                                className={`px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-[#0D47A1] text-sm ${dateError ? 'border-red-500' : 'border-gray-200'}`}
+                              />
+                              <input
+                                type="date"
+                                value={editForm.endDate}
+                                onChange={(e) => handleDateChange('endDate', e.target.value)}
+                                className={`px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-[#0D47A1] text-sm ${dateError ? 'border-red-500' : 'border-gray-200'}`}
+                              />
+                            </div>
+                            {dateError && (
+                              <div className="flex items-center gap-1 text-xs text-red-600">
+                                <AlertCircle size={12} />
+                                {dateError}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <span className="text-sm text-gray-600">

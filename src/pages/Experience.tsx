@@ -457,9 +457,7 @@ export const Experience: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {comparisonData.map((item, index) => {
-                      const outageLessons = uniqueOutages.find(o => item.outageName.includes(o.name.split('年')[1])) 
-                        ? getLessonsByOutage(uniqueOutages.find(o => item.outageName.includes(o.name.split('年')[1]))!.id)
-                        : [];
+                      const outageLessons = item.outageId ? getLessonsByOutage(item.outageId) : [];
                       return (
                         <tr key={index} className="hover:bg-gray-50">
                           <td className="px-4 py-3 font-medium text-gray-800">{item.outageName}</td>
@@ -476,7 +474,13 @@ export const Experience: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 text-center text-sm text-gray-600">{item.qualityPassRate}%</td>
                           <td className="px-4 py-3 text-center text-sm text-gray-600">{item.cost}</td>
-                          <td className="px-4 py-3 text-center text-sm text-gray-600">{outageLessons.length}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`text-sm font-medium ${
+                              outageLessons.length > 0 ? 'text-[#0D47A1]' : 'text-gray-400'
+                            }`}>
+                              {outageLessons.length}
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}
