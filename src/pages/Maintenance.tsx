@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useEquipmentStore } from '@/store/equipmentStore';
+import { useQualityStore } from '@/store/qualityStore';
 import { DataCard } from '@/components/DataCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -99,6 +100,18 @@ const getNextStatusLabel = (current: DefectStatus): string => {
   return getDefectStatusLabel(next);
 };
 
+const getActionLabel = (action: string): string => {
+  const labels: Record<string, string> = {
+    created: '创建缺陷',
+    assigned: '分配责任人',
+    in_progress: '开始处理',
+    resolved: '已解决',
+    verified: '已验证',
+    closed: '已关闭'
+  };
+  return labels[action] || action;
+};
+
 export const Maintenance: React.FC = () => {
   const {
     equipment,
@@ -110,10 +123,14 @@ export const Maintenance: React.FC = () => {
     updateMaintenanceRecord,
     addDefect,
     updateDefect,
+    advanceDefectStatus,
+    closeDefect,
     getDefectsByEquipment,
     getDefectsByRecord,
     getUnclosedDefectCount
   } = useEquipmentStore();
+
+  const { updateCheckFromDefect } = useQualityStore();
 
   const [activeTab, setActiveTab] = useState<TabMode>('equipment');
   const [systemFilter, setSystemFilter] = useState<FilterSystem>('all');
@@ -293,6 +310,8 @@ export const Maintenance: React.FC = () => {
 
   const handleSubmitDefect = () => {
     if (!selectedRecord || !defectFormTitle.trim()) return;
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const newDefect: Defect = {
       id: `DEF-${Date.now()}`,
       title: defectFormTitle,
@@ -306,11 +325,22 @@ export const Maintenance: React.FC = () => {
       sourceDetail: defectFormSourceDetail,
       assignedTo: defectFormAssignedTo,
       createdDate: new Date().toISOString().split('T')[0],
+      createdBy: '当前用户',
       resolvedDate: '',
       resolution: '',
       verifiedBy: '',
       verifiedDate: '',
-      verifiedResult: ''
+      verifiedResult: '',
+      closedBy: '',
+      closedDate: '',
+      actionLogs: [{
+        id: `log-${Date.now()}`,
+        action: 'created',
+        status: 'open',
+        operator: '当前用户',
+        timestamp,
+        comment: `从检修记录转入，来源：${getSourceTypeLabel(defectFormSource)}`
+      }]
     };
     addDefect(newDefect);
     setShowDefectForm(false);
@@ -322,32 +352,51 @@ export const Maintenance: React.FC = () => {
 
   const handleAdvanceDefectStatus = () => {
     if (!selectedDefect) return;
-    const nextStatus = getNextStatus(selectedDefect.status);
-    if (!nextStatus) return;
-
-    const updates: Partial<Defect> = { status: nextStatus };
-
-    if (nextStatus === 'resolved') {
-      updates.resolution = defectResolution;
-      updates.resolvedDate = new Date().toISOString().split('T')[0];
+    
+    let operator = '当前用户';
+    let comment = '';
+    
+    if (selectedDefect.status === 'open' && defectFormAssignedTo) {
+      operator = defectFormAssignedTo;
+      comment = `分配给 ${defectFormAssignedTo} 处理`;
+    } else if (selectedDefect.status === 'in_progress') {
+      comment = defectResolution;
+    } else if (selectedDefect.status === 'resolved') {
+      operator = defectVerifiedBy || '当前用户';
+      comment = defectVerifiedResult;
     }
-
-    if (nextStatus === 'assigned' && defectFormAssignedTo) {
-      updates.assignedTo = defectFormAssignedTo;
+    
+    const updated = advanceDefectStatus(selectedDefect.id, operator, comment);
+    if (updated) {
+      setSelectedDefect(updated);
+      if (updated.qualityCheckId) {
+        updateCheckFromDefect(updated.qualityCheckId, updated.status, updated.resolution);
+      }
+      setDefectFormAssignedTo('');
+      setDefectResolution('');
+      setDefectVerifiedBy('');
+      setDefectVerifiedResult('');
     }
+  };
 
-    if (nextStatus === 'verified') {
-      updates.verifiedBy = defectVerifiedBy;
-      updates.verifiedDate = new Date().toISOString().split('T')[0];
-      updates.verifiedResult = defectVerifiedResult;
+  const [defectCloseOperator, setDefectCloseOperator] = useState('');
+  const [defectCloseComment, setDefectCloseComment] = useState('');
+
+  const handleCloseDefect = () => {
+    if (!selectedDefect) return;
+    const updated = closeDefect(
+      selectedDefect.id,
+      defectCloseOperator || '当前用户',
+      defectCloseComment
+    );
+    if (updated) {
+      setSelectedDefect(updated);
+      if (updated.qualityCheckId) {
+        updateCheckFromDefect(updated.qualityCheckId, updated.status, updated.resolution);
+      }
+      setDefectCloseOperator('');
+      setDefectCloseComment('');
     }
-
-    updateDefect(selectedDefect.id, updates);
-    setSelectedDefect({ ...selectedDefect, ...updates, status: nextStatus });
-    setDefectResolution('');
-    setDefectVerifiedBy('');
-    setDefectVerifiedResult('');
-    setDefectFormAssignedTo('');
   };
 
   return (
@@ -1186,6 +1235,84 @@ export const Maintenance: React.FC = () => {
                     <ArrowRight size={14} />
                     确认推进至{getNextStatusLabel(selectedDefect.status)}
                   </button>
+                </div>
+              )}
+
+              {selectedDefect.status === 'verified' && (
+                <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                <h5 className="font-medium text-gray-800 flex items-center gap-2">
+                  <CheckCircle size={16} className="text-green-600" />
+                  确认关闭缺陷
+                </h5>
+                <p className="text-xs text-gray-500">
+                  缺陷已验证合格，确认关闭后将从未关闭缺陷中移除
+                </p>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">关闭人</label>
+                  <input
+                    type="text"
+                    value={defectCloseOperator}
+                    onChange={(e) => setDefectCloseOperator(e.target.value)}
+                    placeholder="请输入关闭人姓名"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">关闭备注</label>
+                  <textarea
+                    value={defectCloseComment}
+                    onChange={(e) => setDefectCloseComment(e.target.value)}
+                    placeholder="请输入关闭备注（可选）"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm resize-none"
+                  />
+                </div>
+                <button
+                  onClick={handleCloseDefect}
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition-colors flex items-center gap-2"
+                >
+                  <CheckCircle size={14} />
+                  确认关闭
+                </button>
+              </div>
+              )}
+
+              {selectedDefect.actionLogs && selectedDefect.actionLogs.length > 0 && (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <h5 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+                    <Clock size={16} className="text-gray-500" />
+                    操作日志
+                  </h5>
+                  <div className="space-y-3">
+                    {selectedDefect.actionLogs.map((log, idx) => (
+                      <div key={log.id} className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <div className={`w-3 h-3 rounded-full mt-1 ${
+                            idx === 0 ? 'bg-blue-500' :
+                            log.action === 'closed' ? 'bg-green-500' : 'bg-gray-400'
+                          }`} />
+                          {idx < selectedDefect.actionLogs.length - 1 && (
+                            <div className="w-0.5 flex-1 bg-gray-200" />
+                          )}
+                        </div>
+                        <div className="flex-1 pb-3">
+                          <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-800">
+                            {getActionLabel(log.action)}
+                          </span>
+                          <span className="text-xs text-gray-500">{log.timestamp}</span>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1">
+                          操作人: {log.operator}</div>
+                        {log.comment && (
+                          <p className="text-xs text-gray-700 mt-1 bg-white p-2 rounded text-sm">
+                            {log.comment}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

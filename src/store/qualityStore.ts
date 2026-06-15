@@ -34,12 +34,14 @@ interface QualityState {
   setSelectedCheck: (check: QualityCheck | null) => void;
   updateCheckStatus: (id: string, status: QualityCheck['status'], result?: string) => void;
   updateCheckFields: (id: string, updates: Partial<QualityCheck>) => void;
+  updateCheckFromDefect: (qualityCheckId: string, defectStatus: string, defectResolution?: string) => void;
   getChecksByType: (type: string) => QualityCheck[];
   getChecksByPoint: (point: string) => QualityCheck[];
   getChecksByStatus: (status: string) => QualityCheck[];
   getChecksByTask: (taskId: string) => QualityCheck[];
+  getChecksByEquipment: (equipmentId: string) => QualityCheck[];
   getPendingChecks: () => QualityCheck[];
-  getStatistics: () => Statistics;
+  getStatistics: (filter?: { equipmentId?: string }) => Statistics;
 }
 
 const calculateStatistics = (checks: QualityCheck[]): Statistics => {
@@ -143,6 +145,22 @@ export const useQualityStore = create<QualityState>((set, get) => ({
       c.id === id ? { ...c, ...updates } : c
     )
   })),
+  
+  updateCheckFromDefect: (qualityCheckId, defectStatus, defectResolution) => set((state) => ({
+    checks: state.checks.map(c => {
+      if (c.id !== qualityCheckId) return c;
+      const updates: Partial<QualityCheck> = {
+        defectStatus
+      };
+      if (defectStatus === 'closed' && c.status !== 'passed') {
+        updates.status = 'passed';
+      }
+      if (defectResolution) {
+        updates.result = `${c.result || ''} 缺陷处理结果：${defectResolution}`.trim();
+      }
+      return { ...c, ...updates };
+    })
+  })),
 
   getChecksByType: (type) => {
     return get().checks.filter(c => c.type === type);
@@ -160,11 +178,19 @@ export const useQualityStore = create<QualityState>((set, get) => ({
     return get().checks.filter(c => c.taskId === taskId);
   },
   
+  getChecksByEquipment: (equipmentId) => {
+    return get().checks.filter(c => c.equipmentId === equipmentId);
+  },
+  
   getPendingChecks: () => {
     return get().checks.filter(c => c.status === 'pending' || c.status === 'in_progress');
   },
   
-  getStatistics: () => {
-    return calculateStatistics(get().checks);
+  getStatistics: (filter) => {
+    let checks = get().checks;
+    if (filter?.equipmentId) {
+      checks = checks.filter(c => c.equipmentId === filter.equipmentId);
+    }
+    return calculateStatistics(checks);
   },
 }));

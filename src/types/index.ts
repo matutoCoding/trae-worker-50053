@@ -158,6 +158,7 @@ export interface QualityCheck {
   equipmentId?: string;
   maintenanceRecordId?: string;
   isFirstCheck?: boolean;
+  defectStatus?: string;
 }
 
 export interface Defect {
@@ -173,12 +174,25 @@ export interface Defect {
   sourceDetail: string;
   assignedTo: string;
   createdDate: string;
+  createdBy: string;
   resolvedDate: string;
   resolution: string;
   verifiedBy: string;
   verifiedDate: string;
   verifiedResult: string;
+  closedBy: string;
+  closedDate: string;
   qualityCheckId?: string;
+  actionLogs: DefectActionLog[];
+}
+
+export interface DefectActionLog {
+  id: string;
+  action: 'created' | 'assigned' | 'in_progress' | 'resolved' | 'verified' | 'closed';
+  status: DefectStatus;
+  operator: string;
+  timestamp: string;
+  comment: string;
 }
 
 export interface LessonLearned {

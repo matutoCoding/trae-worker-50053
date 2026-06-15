@@ -24,7 +24,8 @@ import {
   BarChart3,
   CheckCheck,
   Eye as EyeIcon,
-  RotateCcw
+  RotateCcw,
+  Shield
 } from 'lucide-react';
 import { formatDate } from '@/utils/date';
 import { getCategoryLabel, getStatusLabel, getSeverityColor
@@ -34,6 +35,8 @@ type TabMode = 'checks' | 'pending' | 'trend';
 type FilterType = 'all' | string;
 type FilterPoint = 'all' | string;
 type FilterStatus = 'all' | string;
+type FilterEquipment = 'all' | string;
+type FilterSystem = 'all' | string;
 
 export const Quality: React.FC = () => {
   const {
@@ -45,19 +48,18 @@ export const Quality: React.FC = () => {
     getPendingChecks,
     getStatistics,
     updateCheckStatus,
-    updateCheckFields
+    updateCheckFields,
+    updateCheckFromDefect
   } = useQualityStore();
 
-  const { maintenanceRecords, addDefect } = useEquipmentStore();
-
-  const statistics = useMemo(() => getStatistics(), [checks, getStatistics]);
-  const pendingChecks = useMemo(() => getPendingChecks(), [checks, getPendingChecks]);
-  const reworkChecks = useMemo(() => getChecksByStatus('rework'), [checks, getChecksByStatus]);
+  const { maintenanceRecords, addDefect, getDefectsByQualityCheck, equipment } = useEquipmentStore();
 
   const [activeTab, setActiveTab] = useState<TabMode>('checks');
   const [typeFilter, setTypeFilter] = useState<FilterType>('all');
   const [pointFilter, setPointFilter] = useState<FilterPoint>('all');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
+  const [equipmentFilter, setEquipmentFilter] = useState<FilterEquipment>('all');
+  const [systemFilter, setSystemFilter] = useState<FilterSystem>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCheck, setSelectedCheck] = useState<QualityCheck | null>(null);
   const [resultForm, setResultForm] = useState('');
@@ -65,6 +67,20 @@ export const Quality: React.FC = () => {
   const [relatedRecordId, setRelatedRecordId] = useState('');
   const [recheckCheck, setRecheckCheck] = useState<QualityCheck | null>(null);
   const [recheckResult, setRecheckResult] = useState('');
+
+  const systemOptions = useMemo(() => {
+    const systems = new Set(equipment.map(e => e.system));
+    return ['all', ...Array.from(systems)];
+  }, [equipment]);
+
+  const statistics = useMemo(() => {
+    return getStatistics({
+      ...(equipmentFilter !== 'all' ? { equipmentId: equipmentFilter } : {})
+    });
+  }, [checks, getStatistics, equipmentFilter, systemFilter, equipment]);
+
+  const pendingChecks = useMemo(() => getPendingChecks(), [checks, getPendingChecks]);
+  const reworkChecks = useMemo(() => getChecksByStatus('rework'), [checks, getChecksByStatus]);
 
   const filteredChecks = useMemo(() => {
     return checks.filter(check => {
@@ -74,9 +90,18 @@ export const Quality: React.FC = () => {
       const matchSearch = searchQuery === '' ||
         check.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         check.taskName.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchType && matchPoint && matchStatus && matchSearch;
+      
+      let matchSystem = true;
+      if (systemFilter !== 'all') {
+        const sysEq = equipment.find(e => e.id === check.equipmentId);
+        matchSystem = sysEq?.system === systemFilter;
+      }
+      
+      const matchEquipment = equipmentFilter === 'all' || check.equipmentId === equipmentFilter;
+      
+      return matchType && matchPoint && matchStatus && matchSearch && matchSystem && matchEquipment;
     });
-  }, [checks, typeFilter, pointFilter, statusFilter, searchQuery]);
+  }, [checks, typeFilter, pointFilter, statusFilter, searchQuery, equipmentFilter, systemFilter, equipment]);
 
   const getCheckTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
@@ -128,6 +153,8 @@ export const Quality: React.FC = () => {
     const description = actionType === 'failed'
       ? `质量验收不通过：${check.name}。检查标准：${check.standard}。验收结论：${resultForm || '检查不合格，需返工。'}`
       : `质量验收需返工：${check.name}。检查标准：${check.standard}。验收结论：${resultForm || '需返工处理后重新报验。'}`;
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
     const newDefect: Defect = {
       id: `DEF-${Date.now()}`,
@@ -141,15 +168,27 @@ export const Quality: React.FC = () => {
       sourceType: 'quality_check',
       sourceDetail: `验收点：${check.name}（${check.id}），验收人：${check.inspector}`,
       assignedTo: '',
-      createdDate: new Date().toISOString().split('T')[0],
+      createdDate: now.toISOString().split('T')[0],
+      createdBy: check.inspector,
       resolvedDate: '',
       resolution: '',
       verifiedBy: '',
       verifiedDate: '',
       verifiedResult: '',
-      qualityCheckId: check.id
+      closedBy: '',
+      closedDate: '',
+      qualityCheckId: check.id,
+      actionLogs: [{
+        id: `log-${Date.now()}`,
+        action: 'created',
+        status: 'open',
+        operator: check.inspector,
+        timestamp,
+        comment: `从质量验收转入，${actionType === 'failed' ? '验收不通过' : '需返工'}`
+      }]
     };
     addDefect(newDefect);
+    updateCheckFields(check.id, { relatedDefectId: newDefect.id, defectStatus: 'open' });
   };
 
   const handleFailCheck = () => {
@@ -198,8 +237,52 @@ export const Quality: React.FC = () => {
     }
   };
 
+  const filteredTrendData = useMemo(() => {
+    if (equipmentFilter === 'all' && systemFilter === 'all') {
+      return trendData;
+    }
+    
+    let filteredCheckIds = checks.map(c => c.id);
+    if (systemFilter !== 'all') {
+      const systemEquipmentIds = equipment
+        .filter(e => e.system === systemFilter)
+        .map(e => e.id);
+      filteredCheckIds = checks
+        .filter(c => c.equipmentId && systemEquipmentIds.includes(c.equipmentId))
+        .map(c => c.id);
+    }
+    if (equipmentFilter !== 'all') {
+      filteredCheckIds = checks
+        .filter(c => c.equipmentId === equipmentFilter)
+        .map(c => c.id);
+    }
+    
+    const dailyStats = new Map<string, { passed: number; failed: number; rework: number; recheckPassed: number; firstFailed: number; recheckFailed: number }>();
+    trendData.forEach(item => dailyStats.set(item.date, { passed: 0, failed: 0, rework: 0, recheckPassed: 0, firstFailed: 0, recheckFailed: 0 }));
+    
+    checks.forEach(check => {
+      if (!filteredCheckIds.includes(check.id)) return;
+      const date = check.checkDate.slice(5).replace('-', '-');
+      if (!dailyStats.has(date)) return;
+      const stats = dailyStats.get(date)!;
+      const reworkCount = check.reworkCount || 0;
+      if (check.status === 'passed') {
+        if (reworkCount > 0) stats.recheckPassed++;
+        else stats.passed++;
+      } else if (check.status === 'failed') {
+        stats.failed++;
+        if (reworkCount > 0) stats.recheckFailed++;
+        else stats.firstFailed++;
+      } else if (check.status === 'rework') {
+        stats.rework++;
+      }
+    });
+    
+    return trendData.map(item => ({ ...item, ...dailyStats.get(item.date)! }));
+  }, [trendData, checks, equipmentFilter, systemFilter, equipment]);
+
   const maxTrendValue = Math.max(
-    ...trendData.map(d => d.passed + (d.recheckPassed || 0) + (d.firstFailed || 0) + (d.recheckFailed || 0) + d.rework),
+    ...filteredTrendData.map(d => d.passed + (d.recheckPassed || 0) + (d.firstFailed || 0) + (d.recheckFailed || 0) + d.rework),
     1
   );
 
@@ -537,11 +620,54 @@ export const Quality: React.FC = () => {
 
           {activeTab === 'trend' && (
             <div className="space-y-6">
+              <div className="flex flex-wrap gap-3 bg-white rounded-lg p-4 border border-gray-200">
+                <div className="flex items-center gap-2">
+                  <Filter size={16} className="text-gray-400" />
+                  <span className="text-sm text-gray-600">专业筛选:</span>
+                  <select
+                    value={systemFilter}
+                    onChange={(e) => {
+                      setSystemFilter(e.target.value);
+                      setEquipmentFilter('all');
+                    }}
+                    className="px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] bg-white min-w-[120px]"
+                  >
+                    <option value="all">全部专业</option>
+                    {systemOptions.filter(s => s !== 'all').map(system => (
+                      <option key={system} value={system}>{system}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Filter size={16} className="text-gray-400" />
+                  <span className="text-sm text-gray-600">设备筛选:</span>
+                  <select
+                    value={equipmentFilter}
+                    onChange={(e) => setEquipmentFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] bg-white min-w-[180px]"
+                  >
+                    <option value="all">全部设备</option>
+                    {equipment
+                      .filter(e => systemFilter === 'all' || e.system === systemFilter)
+                      .map(eq => (
+                        <option key={eq.id} value={eq.id}>{eq.name} ({eq.code})</option>
+                      ))}
+                  </select>
+                </div>
+                {(equipmentFilter !== 'all' || systemFilter !== 'all') && (
+                  <button
+                    onClick={() => { setEquipmentFilter('all'); setSystemFilter('all'); }}
+                    className="px-3 py-1.5 text-sm text-[#0D47A1] hover:bg-blue-50 rounded-md border border-[#0D47A1]"
+                  >
+                    清除筛选
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-6">
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h3 className="font-semibold text-gray-800 mb-4">质量验收趋势</h3>
                   <div className="flex items-end gap-2 h-64">
-                    {trendData.map((item, index) => (
+                    {filteredTrendData.map((item, index) => (
                       <div key={index} className="flex-1 flex flex-col items-center gap-1">
                         <div className="w-full flex flex-col gap-0.5">
                           {(item.recheckFailed || 0) > 0 && (
@@ -791,6 +917,66 @@ export const Quality: React.FC = () => {
                   <p className="text-sm text-gray-800 mt-1">{selectedCheck.result}</p>
                 </div>
               )}
+
+              {(() => {
+                const relatedDefects = getDefectsByQualityCheck(selectedCheck.id);
+                if (relatedDefects.length > 0) {
+                  const defect = relatedDefects[0];
+                  const getDefectStatusLabel = (s: string) => {
+                    const labels: Record<string, string> = {
+                      open: '待分配', assigned: '已分配', in_progress: '处理中',
+                      resolved: '已解决', verified: '已验证', closed: '已关闭'
+                    };
+                    return labels[s] || s;
+                  };
+                  const getDefectStatusColor = (s: string) => {
+                    const colors: Record<string, string> = {
+                      open: 'bg-yellow-100 text-yellow-700',
+                      assigned: 'bg-blue-100 text-blue-700',
+                      in_progress: 'bg-indigo-100 text-indigo-700',
+                      resolved: 'bg-green-100 text-green-700',
+                      verified: 'bg-teal-100 text-teal-700',
+                      closed: 'bg-gray-100 text-gray-500'
+                    };
+                    return colors[s] || 'bg-gray-100 text-gray-700';
+                  };
+                  return (
+                    <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+                      <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                        <AlertTriangle size={14} className="text-red-500" />
+                        关联缺陷
+                      </p>
+                      <div className="bg-white rounded-lg p-3 border border-gray-200">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-gray-800">{defect.title}</p>
+                            <p className="text-xs text-gray-500 mt-1">{defect.description}</p>
+                            <div className="flex items-center gap-2 mt-2">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDefectStatusColor(defect.status)}`}>
+                                {getDefectStatusLabel(defect.status)}
+                              </span>
+                              {defect.assignedTo && (
+                                <span className="text-xs text-gray-500">责任人: {defect.assignedTo}</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-[#0D47A1]">
+                            <Shield size={14} />
+                            <span>设备检修处理中</span>
+                          </div>
+                        </div>
+                        {defect.resolution && (
+                          <div className="mt-2 pt-2 border-t border-gray-100">
+                            <p className="text-xs text-gray-500">处理进展</p>
+                            <p className="text-xs text-gray-700 mt-1">{defect.resolution}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {selectedCheck.attachments.length > 0 && (
                 <div>

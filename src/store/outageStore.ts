@@ -11,7 +11,7 @@ interface OutageState {
   setTasks: (tasks: Task[]) => void;
   setSelectedTask: (task: Task | null) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
-  updateTaskAndDownstream: (taskId: string, updates: Partial<Task>, daysShift: number) => void;
+  updateTaskAndDownstream: (taskId: string, updates: Partial<Task>, daysShift: number, isCritical: boolean) => void;
   updateCurrentOutage: (updates: Partial<Outage>) => void;
   getCriticalPath: () => Task[];
   getTasksByCategory: (category: string) => Task[];
@@ -59,7 +59,7 @@ export const useOutageStore = create<OutageState>((set, get) => ({
     return downstream;
   },
   
-  updateTaskAndDownstream: (taskId, updates, daysShift) => set((state) => {
+  updateTaskAndDownstream: (taskId, updates, daysShift, isCritical) => set((state) => {
     const addDays = (dateStr: string, days: number): string => {
       if (!dateStr || days === 0) return dateStr;
       const d = new Date(dateStr);
@@ -84,7 +84,7 @@ export const useOutageStore = create<OutageState>((set, get) => ({
     
     const updatedState = { ...state, tasks: updatedTasks };
     
-    if (daysShift > 0) {
+    if (daysShift > 0 && isCritical) {
       const endDate = new Date(state.currentOutage.endDate);
       endDate.setDate(endDate.getDate() + daysShift);
       updatedState.currentOutage = {

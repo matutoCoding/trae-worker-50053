@@ -287,11 +287,21 @@ export const mockDefects: Defect[] = [
     sourceDetail: '轴承径向间隙测量值0.18mm，标准0.10-0.20mm，接近上限',
     assignedTo: '马明',
     createdDate: '2026-06-12',
+    createdBy: '段鹏',
     resolvedDate: '2026-06-15',
     resolution: '更换径向轴承，更换后间隙测量0.12mm，符合标准',
     verifiedBy: '段鹏',
     verifiedDate: '2026-06-15',
     verifiedResult: '更换后间隙0.12mm，合格',
+    closedBy: '',
+    closedDate: '',
+    actionLogs: [
+      { id: 'log-1', action: 'created', status: 'open', operator: '段鹏', timestamp: '2026-06-12 09:30', comment: '从测量数据转入，轴承间隙接近上限' },
+      { id: 'log-2', action: 'assigned', status: 'assigned', operator: '段鹏', timestamp: '2026-06-12 09:45', comment: '分配给马明处理' },
+      { id: 'log-3', action: 'in_progress', status: 'in_progress', operator: '马明', timestamp: '2026-06-13 08:00', comment: '开始更换轴承作业' },
+      { id: 'log-4', action: 'resolved', status: 'resolved', operator: '马明', timestamp: '2026-06-15 10:00', comment: '轴承更换完成，间隙0.12mm' },
+      { id: 'log-5', action: 'verified', status: 'verified', operator: '段鹏', timestamp: '2026-06-15 14:00', comment: '复验合格' }
+    ]
   },
   {
     id: 'defect-002',
@@ -306,11 +316,19 @@ export const mockDefects: Defect[] = [
     sourceDetail: '绝缘电阻测量值0.8MΩ，标准≥1.0MΩ，不合格',
     assignedTo: '林峰',
     createdDate: '2026-06-12',
+    createdBy: '段鹏',
     resolvedDate: '',
     resolution: '正在更换绝缘电阻偏低的2根电加热器元件',
     verifiedBy: '',
     verifiedDate: '',
     verifiedResult: '',
+    closedBy: '',
+    closedDate: '',
+    actionLogs: [
+      { id: 'log-1', action: 'created', status: 'open', operator: '段鹏', timestamp: '2026-06-12 10:00', comment: '绝缘电阻不达标' },
+      { id: 'log-2', action: 'assigned', status: 'assigned', operator: '段鹏', timestamp: '2026-06-12 10:30', comment: '分配给林峰处理' },
+      { id: 'log-3', action: 'in_progress', status: 'in_progress', operator: '林峰', timestamp: '2026-06-13 09:00', comment: '开始更换加热器' }
+    ]
   },
   {
     id: 'defect-003',
@@ -325,11 +343,18 @@ export const mockDefects: Defect[] = [
     sourceDetail: '涡流检查发现3根传热管缺陷标记，需堵管处理',
     assignedTo: '钱勇',
     createdDate: '2026-06-15',
+    createdBy: '赵工',
     resolvedDate: '',
     resolution: '',
     verifiedBy: '',
     verifiedDate: '',
     verifiedResult: '',
+    closedBy: '',
+    closedDate: '',
+    actionLogs: [
+      { id: 'log-1', action: 'created', status: 'open', operator: '赵工', timestamp: '2026-06-15 08:00', comment: '涡流检查发现缺陷' },
+      { id: 'log-2', action: 'assigned', status: 'assigned', operator: '赵工', timestamp: '2026-06-15 09:00', comment: '分配给钱勇处理' }
+    ]
   },
   {
     id: 'defect-004',
@@ -344,10 +369,20 @@ export const mockDefects: Defect[] = [
     sourceDetail: '叶轮有轻微气蚀痕迹，轴承间隙偏大',
     assignedTo: '马明',
     createdDate: '2026-06-12',
+    createdBy: '段鹏',
     resolvedDate: '2026-06-13',
     resolution: '对叶轮气蚀区域进行打磨抛光处理，评估不影响安全运行',
     verifiedBy: '段鹏',
     verifiedDate: '2026-06-14',
     verifiedResult: '打磨后表面光滑，可继续服役',
+    closedBy: '',
+    closedDate: '',
+    actionLogs: [
+      { id: 'log-1', action: 'created', status: 'open', operator: '段鹏', timestamp: '2026-06-12 14:00', comment: '解体检查发现气蚀痕迹' },
+      { id: 'log-2', action: 'assigned', status: 'assigned', operator: '段鹏', timestamp: '2026-06-12 14:30', comment: '分配给马明处理' },
+      { id: 'log-3', action: 'in_progress', status: 'in_progress', operator: '马明', timestamp: '2026-06-13 08:00', comment: '开始打磨处理' },
+      { id: 'log-4', action: 'resolved', status: 'resolved', operator: '马明', timestamp: '2026-06-13 16:00', comment: '打磨完成' },
+      { id: 'log-5', action: 'verified', status: 'verified', operator: '段鹏', timestamp: '2026-06-14 10:00', comment: '复验合格，待关闭' }
+    ]
   },
 ];

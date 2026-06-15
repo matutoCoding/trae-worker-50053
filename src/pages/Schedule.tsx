@@ -156,7 +156,7 @@ export const Schedule: React.FC = () => {
       const endShift = Math.round((newEndDate.getTime() - oldEndDate.getTime()) / (1000 * 60 * 60 * 24));
       const daysShift = Math.max(startShift, endShift, 0);
       
-      updateTaskAndDownstream(editingTask.id, { ...editForm, duration }, daysShift);
+      updateTaskAndDownstream(editingTask.id, { ...editForm, duration }, daysShift, editingTask.isCritical);
       setEditingTask(null);
       setDateError(null);
       setImpactAnalysis(null);

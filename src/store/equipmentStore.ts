@@ -1,6 +1,23 @@
 import { create } from 'zustand';
-import { Equipment, MaintenanceRecord, Defect } from '@/types';
+import { Equipment, MaintenanceRecord, Defect, DefectActionLog } from '@/types';
 import { mockEquipment, mockMaintenanceRecords, mockDefects } from '@/data/equipment';
+
+const getNextStatus = (status: Defect['status']): Defect['status'] | null => {
+  const transitions: Record<Defect['status'], Defect['status'] | null> = {
+    open: 'assigned',
+    assigned: 'in_progress',
+    in_progress: 'resolved',
+    resolved: 'verified',
+    verified: 'closed',
+    closed: null
+  };
+  return transitions[status];
+};
+
+const getNowTimestamp = (): string => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+};
 
 interface EquipmentState {
   equipment: Equipment[];
@@ -15,12 +32,15 @@ interface EquipmentState {
   updateMaintenanceRecord: (id: string, updates: Partial<MaintenanceRecord>) => void;
   addDefect: (defect: Defect) => void;
   updateDefect: (id: string, updates: Partial<Defect>) => void;
+  advanceDefectStatus: (id: string, operator: string, comment?: string) => Defect | undefined;
+  closeDefect: (id: string, operator: string, comment?: string) => Defect | undefined;
   getEquipmentBySystem: (system: string) => Equipment[];
   getEquipmentByStatus: (status: string) => Equipment[];
   getRecordsByEquipment: (equipmentId: string) => MaintenanceRecord[];
   getRecordsByTask: (taskId: string) => MaintenanceRecord[];
   getDefectsByEquipment: (equipmentId: string) => Defect[];
   getDefectsByRecord: (recordId: string) => Defect[];
+  getDefectsByQualityCheck: (qualityCheckId: string) => Defect[];
   getUnclosedDefectsByEquipment: (equipmentId: string) => Defect[];
   getUnclosedDefectCount: (equipmentId: string) => number;
 }
@@ -53,6 +73,78 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
     )
   })),
   
+  advanceDefectStatus: (id, operator, comment) => {
+    let updatedDefect: Defect | undefined;
+    set((state) => {
+      const defect = state.defects.find(d => d.id === id);
+      if (!defect) return state;
+      const nextStatus = getNextStatus(defect.status);
+      if (!nextStatus) return state;
+      
+      const now = getNowTimestamp();
+      const newLog: DefectActionLog = {
+        id: `log-${Date.now()}`,
+        action: nextStatus as DefectActionLog['action'],
+        status: nextStatus,
+        operator,
+        timestamp: now,
+        comment: comment || ''
+      };
+      
+      const updates: Partial<Defect> = { status: nextStatus, actionLogs: [...defect.actionLogs, newLog] };
+      if (nextStatus === 'assigned') {
+        updates.assignedTo = operator;
+      } else if (nextStatus === 'resolved') {
+        updates.resolvedDate = now.split(' ')[0];
+        updates.resolution = comment;
+      } else if (nextStatus === 'verified') {
+        updates.verifiedBy = operator;
+        updates.verifiedDate = now.split(' ')[0];
+        updates.verifiedResult = comment;
+      } else if (nextStatus === 'closed') {
+        updates.closedBy = operator;
+        updates.closedDate = now.split(' ')[0];
+      }
+      
+      updatedDefect = { ...defect, ...updates };
+      return {
+        defects: state.defects.map(d => d.id === id ? updatedDefect! : d)
+      };
+    });
+    return updatedDefect;
+  },
+  
+  closeDefect: (id, operator, comment) => {
+    let updatedDefect: Defect | undefined;
+    set((state) => {
+      const defect = state.defects.find(d => d.id === id);
+      if (!defect || defect.status !== 'verified') return state;
+      
+      const now = getNowTimestamp();
+      const newLog: DefectActionLog = {
+        id: `log-${Date.now()}`,
+        action: 'closed',
+        status: 'closed',
+        operator,
+        timestamp: now,
+        comment: comment || '已确认关闭'
+      };
+      
+      updatedDefect = {
+        ...defect,
+        status: 'closed',
+        closedBy: operator,
+        closedDate: now.split(' ')[0],
+        actionLogs: [...defect.actionLogs, newLog]
+      };
+      
+      return {
+        defects: state.defects.map(d => d.id === id ? updatedDefect! : d)
+      };
+    });
+    return updatedDefect;
+  },
+  
   getEquipmentBySystem: (system) => {
     return get().equipment.filter(e => e.system === system);
   },
@@ -75,6 +167,10 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
   
   getDefectsByRecord: (recordId) => {
     return get().defects.filter(d => d.maintenanceRecordId === recordId);
+  },
+  
+  getDefectsByQualityCheck: (qualityCheckId) => {
+    return get().defects.filter(d => d.qualityCheckId === qualityCheckId);
   },
   
   getUnclosedDefectsByEquipment: (equipmentId) => {
