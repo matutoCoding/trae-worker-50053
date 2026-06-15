@@ -33,7 +33,7 @@ type FilterCategory = 'all' | 'mechanical' | 'electrical' | 'instrument' | 'radi
 type FilterStatus = 'all' | 'pending' | 'in_progress' | 'completed' | 'delayed';
 
 export const Schedule: React.FC = () => {
-  const { currentOutage, tasks, updateTask, getTasksByCategory, getCriticalPath } = useOutageStore();
+  const { currentOutage, tasks, updateTask, updateTaskAndDownstream, getTasksByCategory, getCriticalPath, getDownstreamTasks } = useOutageStore();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [categoryFilter, setCategoryFilter] = useState<FilterCategory>('all');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
@@ -107,33 +107,23 @@ export const Schedule: React.FC = () => {
       }
 
       const oldStartDate = new Date(editingTask.startDate);
+      const oldEndDate = new Date(editingTask.endDate);
       const newStartDate = new Date(editForm.startDate);
-      const daysShift = Math.round((newStartDate.getTime() - oldStartDate.getTime()) / (1000 * 60 * 60 * 24));
+      const newEndDate = new Date(editForm.endDate);
+      
+      const startShift = Math.round((newStartDate.getTime() - oldStartDate.getTime()) / (1000 * 60 * 60 * 24));
+      const endShift = Math.round((newEndDate.getTime() - oldEndDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysShift = Math.max(startShift, endShift, 0);
       const durationChange = duration - editingTask.duration;
-      const hasDateChange = daysShift !== 0 || durationChange !== 0;
+      const hasDateChange = startShift !== 0 || durationChange !== 0;
 
-      if (hasDateChange) {
-        const affectedTasks: Task[] = [];
-        const visited = new Set<string>();
-        
-        const findAffected = (taskId: string) => {
-          if (visited.has(taskId)) return;
-          visited.add(taskId);
-          const downstream = tasks.filter(t => t.dependencies.includes(taskId));
-          for (const dep of downstream) {
-            if (!visited.has(dep.id)) {
-              affectedTasks.push(dep);
-              findAffected(dep.id);
-            }
-          }
-        };
-        findAffected(editingTask.id);
-
+      if (hasDateChange && daysShift > 0) {
+        const affectedTasks = getDownstreamTasks(editingTask.id);
         let newOutageEnd = currentOutage.endDate;
-        if (editingTask.isCritical && (daysShift > 0 || durationChange > 0)) {
-          const totalShift = daysShift > 0 ? daysShift : durationChange;
+        
+        if (editingTask.isCritical && daysShift > 0) {
           const endDate = new Date(currentOutage.endDate);
-          endDate.setDate(endDate.getDate() + totalShift);
+          endDate.setDate(endDate.getDate() + daysShift);
           newOutageEnd = endDate.toISOString().split('T')[0];
         }
 
@@ -141,9 +131,12 @@ export const Schedule: React.FC = () => {
           visible: true,
           affectedTasks,
           newOutageEnd,
-          daysShift: (editingTask.isCritical && (daysShift > 0 || durationChange > 0))
-            ? (daysShift > 0 ? daysShift : durationChange) : 0,
+          daysShift: editingTask.isCritical ? daysShift : 0,
         });
+      } else if (hasDateChange) {
+        updateTask(editingTask.id, { ...editForm, duration });
+        setEditingTask(null);
+        setDateError(null);
       } else {
         updateTask(editingTask.id, { ...editForm, duration });
         setEditingTask(null);
@@ -155,7 +148,15 @@ export const Schedule: React.FC = () => {
   const handleConfirmImpact = () => {
     if (editingTask) {
       const duration = getDaysDiff(editForm.startDate, editForm.endDate) + 1;
-      updateTask(editingTask.id, { ...editForm, duration });
+      const oldStartDate = new Date(editingTask.startDate);
+      const oldEndDate = new Date(editingTask.endDate);
+      const newStartDate = new Date(editForm.startDate);
+      const newEndDate = new Date(editForm.endDate);
+      const startShift = Math.round((newStartDate.getTime() - oldStartDate.getTime()) / (1000 * 60 * 60 * 24));
+      const endShift = Math.round((newEndDate.getTime() - oldEndDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysShift = Math.max(startShift, endShift, 0);
+      
+      updateTaskAndDownstream(editingTask.id, { ...editForm, duration }, daysShift);
       setEditingTask(null);
       setDateError(null);
       setImpactAnalysis(null);

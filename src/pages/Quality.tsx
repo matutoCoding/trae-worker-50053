@@ -4,7 +4,7 @@ import { useEquipmentStore } from '@/store/equipmentStore';
 import { DataCard } from '@/components/DataCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ProgressBar } from '@/components/ProgressBar';
-import { QualityCheck } from '@/types';
+import { QualityCheck, Defect, DefectSeverity } from '@/types';
 import {
   CheckCircle,
   XCircle,
@@ -48,7 +48,7 @@ export const Quality: React.FC = () => {
     updateCheckFields
   } = useQualityStore();
 
-  const { maintenanceRecords } = useEquipmentStore();
+  const { maintenanceRecords, addDefect } = useEquipmentStore();
 
   const statistics = useMemo(() => getStatistics(), [checks, getStatistics]);
   const pendingChecks = useMemo(() => getPendingChecks(), [checks, getPendingChecks]);
@@ -119,6 +119,39 @@ export const Quality: React.FC = () => {
     }
   };
 
+  const createDefectFromQuality = (
+    check: QualityCheck,
+    record: { id: string; equipmentId: string; equipmentName: string },
+    actionType: 'failed' | 'rework'
+  ) => {
+    const severity: DefectSeverity = actionType === 'failed' ? 'major' : 'minor';
+    const description = actionType === 'failed'
+      ? `质量验收不通过：${check.name}。检查标准：${check.standard}。验收结论：${resultForm || '检查不合格，需返工。'}`
+      : `质量验收需返工：${check.name}。检查标准：${check.standard}。验收结论：${resultForm || '需返工处理后重新报验。'}`;
+
+    const newDefect: Defect = {
+      id: `DEF-${Date.now()}`,
+      title: `${check.name} - ${actionType === 'failed' ? '验收不通过' : '需返工处理'}`,
+      description,
+      severity,
+      status: 'open',
+      equipmentId: record.equipmentId,
+      equipmentName: record.equipmentName,
+      maintenanceRecordId: record.id,
+      sourceType: 'quality_check',
+      sourceDetail: `验收点：${check.name}（${check.id}），验收人：${check.inspector}`,
+      assignedTo: '',
+      createdDate: new Date().toISOString().split('T')[0],
+      resolvedDate: '',
+      resolution: '',
+      verifiedBy: '',
+      verifiedDate: '',
+      verifiedResult: '',
+      qualityCheckId: check.id
+    };
+    addDefect(newDefect);
+  };
+
   const handleFailCheck = () => {
     if (selectedCheck) {
       const record = maintenanceRecords.find(r => r.id === relatedRecordId);
@@ -127,6 +160,7 @@ export const Quality: React.FC = () => {
           equipmentId: record.equipmentId,
           maintenanceRecordId: record.id
         });
+        createDefectFromQuality(selectedCheck, record, 'failed');
       }
       updateCheckStatus(selectedCheck.id, 'failed', resultForm || '检查不合格，需返工。');
       closeCheckModal();
@@ -141,6 +175,7 @@ export const Quality: React.FC = () => {
           equipmentId: record.equipmentId,
           maintenanceRecordId: record.id
         });
+        createDefectFromQuality(selectedCheck, record, 'rework');
       }
       updateCheckStatus(selectedCheck.id, 'rework', resultForm || '需返工处理后重新报验。');
       closeCheckModal();
@@ -164,7 +199,7 @@ export const Quality: React.FC = () => {
   };
 
   const maxTrendValue = Math.max(
-    ...trendData.map(d => d.passed + d.failed + d.rework + (d.recheckPassed || 0)),
+    ...trendData.map(d => d.passed + (d.recheckPassed || 0) + (d.firstFailed || 0) + (d.recheckFailed || 0) + d.rework),
     1
   );
 
@@ -245,7 +280,7 @@ export const Quality: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-7 gap-4">
         <DataCard
           title="质量检查点"
           value={statistics.total}
@@ -260,6 +295,24 @@ export const Quality: React.FC = () => {
           trend={{ value: statistics.passRate, isUp: true, suffix: '%' }}
         />
         <DataCard
+          title="复验通过"
+          value={statistics.recheckPassed}
+          icon={RotateCcw}
+          color="#0D9488"
+        />
+        <DataCard
+          title="首次不通过"
+          value={statistics.firstFailed}
+          icon={XCircle}
+          color="#DC2626"
+        />
+        <DataCard
+          title="复验不通过"
+          value={statistics.recheckFailed}
+          icon={AlertCircle}
+          color="#991B1B"
+        />
+        <DataCard
           title="待验收"
           value={pendingChecks.length}
           icon={Clock}
@@ -271,12 +324,6 @@ export const Quality: React.FC = () => {
           suffix="%"
           icon={CheckCheck}
           color="#8B5CF6"
-        />
-        <DataCard
-          title="复验通过"
-          value={statistics.recheckPassed}
-          icon={RotateCcw}
-          color="#0D9488"
         />
       </div>
 
@@ -497,31 +544,55 @@ export const Quality: React.FC = () => {
                     {trendData.map((item, index) => (
                       <div key={index} className="flex-1 flex flex-col items-center gap-1">
                         <div className="w-full flex flex-col gap-0.5">
-                          {item.failed > 0 && (
+                          {(item.recheckFailed || 0) > 0 && (
                             <div
-                              className="w-full bg-red-500 rounded-t"
-                              style={{ height: `${(item.failed / maxTrendValue) * 100}%`, minHeight: item.failed > 0 ? '8px' : 0 }}
-                              title={`不通过: ${item.failed}`}
+                              className="w-full rounded-t"
+                              style={{
+                                height: `${((item.recheckFailed || 0) / maxTrendValue) * 100}%`,
+                                minHeight: (item.recheckFailed || 0) > 0 ? '8px' : 0,
+                                backgroundColor: '#991B1B'
+                              }}
+                              title={`复验不通过: ${item.recheckFailed || 0}`}
+                            />
+                          )}
+                          {(item.firstFailed || 0) > 0 && (
+                            <div
+                              className="w-full bg-red-500"
+                              style={{
+                                height: `${((item.firstFailed || 0) / maxTrendValue) * 100}%`,
+                                minHeight: (item.firstFailed || 0) > 0 ? '8px' : 0
+                              }}
+                              title={`首次不通过: ${item.firstFailed || 0}`}
                             />
                           )}
                           {item.rework > 0 && (
                             <div
                               className="w-full bg-yellow-500"
-                              style={{ height: `${(item.rework / maxTrendValue) * 100}%`, minHeight: item.rework > 0 ? '8px' : 0 }}
+                              style={{
+                                height: `${(item.rework / maxTrendValue) * 100}%`,
+                                minHeight: item.rework > 0 ? '8px' : 0
+                              }}
                               title={`返工: ${item.rework}`}
                             />
                           )}
                           {(item.recheckPassed || 0) > 0 && (
                             <div
                               className="w-full"
-                              style={{ height: `${((item.recheckPassed || 0) / maxTrendValue) * 100}%`, minHeight: (item.recheckPassed || 0) > 0 ? '8px' : 0, backgroundColor: '#0D9488' }}
+                              style={{
+                                height: `${((item.recheckPassed || 0) / maxTrendValue) * 100}%`,
+                                minHeight: (item.recheckPassed || 0) > 0 ? '8px' : 0,
+                                backgroundColor: '#0D9488'
+                              }}
                               title={`复验通过: ${item.recheckPassed || 0}`}
                             />
                           )}
                           {item.passed > 0 && (
                             <div
                               className="w-full bg-green-500 rounded-b"
-                              style={{ height: `${(item.passed / maxTrendValue) * 100}%`, minHeight: item.passed > 0 ? '8px' : 0 }}
+                              style={{
+                                height: `${(item.passed / maxTrendValue) * 100}%`,
+                                minHeight: item.passed > 0 ? '8px' : 0
+                              }}
                               title={`首次通过: ${item.passed}`}
                             />
                           )}
@@ -545,7 +616,11 @@ export const Quality: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 bg-red-500 rounded" />
-                      <span className="text-sm text-gray-600">不通过</span>
+                      <span className="text-sm text-gray-600">首次不通过</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded" style={{ backgroundColor: '#991B1B' }} />
+                      <span className="text-sm text-gray-600">复验不通过</span>
                     </div>
                   </div>
                 </div>
@@ -571,8 +646,24 @@ export const Quality: React.FC = () => {
                         <p className="text-2xl font-bold text-gray-800 mt-1">{statistics.total}</p>
                       </div>
                       <div className="bg-white p-4 rounded-lg border border-gray-200">
-                        <p className="text-xs text-gray-500">已通过</p>
-                        <p className="text-2xl font-bold text-green-600 mt-1">{statistics.passed}</p>
+                        <p className="text-xs text-gray-500">首次通过</p>
+                        <p className="text-2xl font-bold text-green-600 mt-1">{statistics.passed - statistics.recheckPassed}</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg border border-gray-200">
+                        <p className="text-xs text-gray-500">复验通过</p>
+                        <p className="text-2xl font-bold mt-1" style={{ color: '#0D9488' }}>{statistics.recheckPassed}</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg border border-gray-200">
+                        <p className="text-xs text-gray-500">首次不通过</p>
+                        <p className="text-2xl font-bold text-red-600 mt-1">{statistics.firstFailed}</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg border border-gray-200">
+                        <p className="text-xs text-gray-500">复验不通过</p>
+                        <p className="text-2xl font-bold mt-1" style={{ color: '#991B1B' }}>{statistics.recheckFailed}</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg border border-gray-200">
+                        <p className="text-xs text-gray-500">返工中</p>
+                        <p className="text-2xl font-bold text-yellow-600 mt-1">{statistics.rework}</p>
                       </div>
                       <div className="bg-white p-4 rounded-lg border border-gray-200">
                         <p className="text-xs text-gray-500">待验收</p>

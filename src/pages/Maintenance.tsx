@@ -157,7 +157,7 @@ export const Maintenance: React.FC = () => {
   const pendingRecords = maintenanceRecords.filter(r => r.status === 'pending');
 
   const unclosedDefectCount = useMemo(() => {
-    return defects.filter(d => d.status !== 'closed' && d.status !== 'verified').length;
+    return defects.filter(d => d.status !== 'closed').length;
   }, [defects]);
 
   const selectedEquipmentRecords = useMemo(() => {
@@ -233,7 +233,7 @@ export const Maintenance: React.FC = () => {
 
     const s = standard.trim();
 
-    const toleranceMatch = s.match(/^([\d.]+)\s*[±\+\-]\s*([\d.]+)$/);
+    const toleranceMatch = s.match(/^([\d.]+)\s*[±\+]\s*([\d.]+)$/);
     if (toleranceMatch) {
       const center = parseFloat(toleranceMatch[1]);
       const tolerance = parseFloat(toleranceMatch[2]);

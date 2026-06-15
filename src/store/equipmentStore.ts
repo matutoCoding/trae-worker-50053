@@ -78,10 +78,10 @@ export const useEquipmentStore = create<EquipmentState>((set, get) => ({
   },
   
   getUnclosedDefectsByEquipment: (equipmentId) => {
-    return get().defects.filter(d => d.equipmentId === equipmentId && !['closed', 'verified'].includes(d.status));
+    return get().defects.filter(d => d.equipmentId === equipmentId && d.status !== 'closed');
   },
   
   getUnclosedDefectCount: (equipmentId) => {
-    return get().defects.filter(d => d.equipmentId === equipmentId && !['closed', 'verified'].includes(d.status)).length;
+    return get().defects.filter(d => d.equipmentId === equipmentId && d.status !== 'closed').length;
   },
 }));
