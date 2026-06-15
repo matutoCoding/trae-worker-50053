@@ -3,7 +3,7 @@ import { useEquipmentStore } from '@/store/equipmentStore';
 import { DataCard } from '@/components/DataCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ProgressBar } from '@/components/ProgressBar';
-import { Equipment, MaintenanceRecord } from '@/types';
+import { Equipment, MaintenanceRecord, Defect, DefectStatus, DefectSeverity } from '@/types';
 import {
   Cog,
   Wrench,
@@ -23,24 +23,96 @@ import {
   AlertCircle,
   Box,
   Layers,
-  Settings
+  Settings,
+  Shield,
+  Plus,
+  ArrowRight,
+  GitBranch
 } from 'lucide-react';
 import { formatDate } from '@/utils/date';
-import { getMaintenanceTypeLabel, getStatusLabel
-} from '@/utils/format';
+import { getMaintenanceTypeLabel, getStatusLabel } from '@/utils/format';
 
-type TabMode = 'equipment' | 'records' | 'spareparts';
+type TabMode = 'equipment' | 'records' | 'spareparts' | 'defects';
 type FilterSystem = 'all' | string;
 type FilterStatus = 'all' | string;
+
+const getDefectStatusLabel = (status: DefectStatus): string => {
+  const labels: Record<DefectStatus, string> = {
+    open: '待分配',
+    assigned: '已分配',
+    in_progress: '处理中',
+    resolved: '已解决',
+    verified: '已验证',
+    closed: '已关闭'
+  };
+  return labels[status] || status;
+};
+
+const getDefectStatusColor = (status: DefectStatus): string => {
+  const colors: Record<DefectStatus, string> = {
+    open: 'bg-yellow-100 text-yellow-700',
+    assigned: 'bg-blue-100 text-blue-700',
+    in_progress: 'bg-indigo-100 text-indigo-700',
+    resolved: 'bg-green-100 text-green-700',
+    verified: 'bg-teal-100 text-teal-700',
+    closed: 'bg-gray-100 text-gray-500'
+  };
+  return colors[status] || 'bg-gray-100 text-gray-700';
+};
+
+const getSeverityLabel = (severity: DefectSeverity): string => {
+  const labels: Record<DefectSeverity, string> = {
+    minor: '一般',
+    major: '重要',
+    critical: '严重'
+  };
+  return labels[severity] || severity;
+};
+
+const getSeverityColor = (severity: DefectSeverity): string => {
+  const colors: Record<DefectSeverity, string> = {
+    minor: 'bg-blue-100 text-blue-700',
+    major: 'bg-orange-100 text-orange-700',
+    critical: 'bg-red-100 text-red-700'
+  };
+  return colors[severity] || 'bg-gray-100 text-gray-700';
+};
+
+const getSourceTypeLabel = (sourceType: string): string => {
+  const labels: Record<string, string> = {
+    measurement: '测量数据',
+    finding: '检查发现',
+    quality_check: '质量检查'
+  };
+  return labels[sourceType] || sourceType;
+};
+
+const getNextStatus = (current: DefectStatus): DefectStatus | null => {
+  const flow: DefectStatus[] = ['open', 'assigned', 'in_progress', 'resolved', 'verified', 'closed'];
+  const idx = flow.indexOf(current);
+  return idx < flow.length - 1 ? flow[idx + 1] : null;
+};
+
+const getNextStatusLabel = (current: DefectStatus): string => {
+  const next = getNextStatus(current);
+  if (!next) return '';
+  return getDefectStatusLabel(next);
+};
 
 export const Maintenance: React.FC = () => {
   const {
     equipment,
     maintenanceRecords,
+    defects,
     getEquipmentBySystem,
     getEquipmentByStatus,
     getRecordsByEquipment,
-    updateMaintenanceRecord
+    updateMaintenanceRecord,
+    addDefect,
+    updateDefect,
+    getDefectsByEquipment,
+    getDefectsByRecord,
+    getUnclosedDefectCount
   } = useEquipmentStore();
 
   const [activeTab, setActiveTab] = useState<TabMode>('equipment');
@@ -49,6 +121,16 @@ export const Maintenance: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<MaintenanceRecord | null>(null);
+  const [selectedDefect, setSelectedDefect] = useState<Defect | null>(null);
+  const [showDefectForm, setShowDefectForm] = useState(false);
+  const [defectFormSource, setDefectFormSource] = useState<'finding' | 'measurement'>('finding');
+  const [defectFormSourceDetail, setDefectFormSourceDetail] = useState('');
+  const [defectFormTitle, setDefectFormTitle] = useState('');
+  const [defectFormSeverity, setDefectFormSeverity] = useState<DefectSeverity>('minor');
+  const [defectFormAssignedTo, setDefectFormAssignedTo] = useState('');
+  const [defectResolution, setDefectResolution] = useState('');
+  const [defectVerifiedBy, setDefectVerifiedBy] = useState('');
+  const [defectVerifiedResult, setDefectVerifiedResult] = useState('');
 
   const systems = useMemo(() => {
     const sys = new Set(equipment.map(e => e.system));
@@ -74,10 +156,19 @@ export const Maintenance: React.FC = () => {
   const completedRecords = maintenanceRecords.filter(r => r.status === 'completed');
   const pendingRecords = maintenanceRecords.filter(r => r.status === 'pending');
 
+  const unclosedDefectCount = useMemo(() => {
+    return defects.filter(d => d.status !== 'closed' && d.status !== 'verified').length;
+  }, [defects]);
+
   const selectedEquipmentRecords = useMemo(() => {
     if (!selectedEquipment) return [];
     return getRecordsByEquipment(selectedEquipment.id);
   }, [selectedEquipment, getRecordsByEquipment]);
+
+  const selectedRecordDefects = useMemo(() => {
+    if (!selectedRecord) return [];
+    return getDefectsByRecord(selectedRecord.id);
+  }, [selectedRecord, getDefectsByRecord]);
 
   const allSpareParts = useMemo(() => {
     const parts: Array<{ name: string; partNumber: string; quantity: number; used: number; status: string; equipmentName: string; }> = [];
@@ -136,27 +227,35 @@ export const Maintenance: React.FC = () => {
 
   const checkMeasurementStatus = (value: string, standard: string): 'normal' | 'abnormal' | 'unknown' => {
     if (!value || !standard) return 'unknown';
-    
+
     const numValue = parseValue(value);
     if (numValue === null) return 'unknown';
-    
-    const cleanStandard = standard.trim();
-    
-    if (cleanStandard.startsWith('≥') || cleanStandard.startsWith('>=')) {
-      const minVal = parseValue(cleanStandard.substring(1));
+
+    const s = standard.trim();
+
+    const toleranceMatch = s.match(/^([\d.]+)\s*[±\+\-]\s*([\d.]+)$/);
+    if (toleranceMatch) {
+      const center = parseFloat(toleranceMatch[1]);
+      const tolerance = parseFloat(toleranceMatch[2]);
+      if (!isNaN(center) && !isNaN(tolerance)) {
+        return numValue >= center - tolerance && numValue <= center + tolerance ? 'normal' : 'abnormal';
+      }
+    }
+
+    if (s.startsWith('≥') || s.startsWith('>=')) {
+      const minVal = parseValue(s.substring(s.startsWith('>=') ? 2 : 1));
       if (minVal !== null) return numValue >= minVal ? 'normal' : 'abnormal';
-    } else if (cleanStandard.startsWith('≤') || cleanStandard.startsWith('<=')) {
-      const maxVal = parseValue(cleanStandard.substring(1));
+    } else if (s.startsWith('≤') || s.startsWith('<=')) {
+      const maxVal = parseValue(s.substring(s.startsWith('<=') ? 2 : 1));
       if (maxVal !== null) return numValue <= maxVal ? 'normal' : 'abnormal';
-    } else if (cleanStandard.startsWith('>')) {
-      const minVal = parseValue(cleanStandard.substring(1));
+    } else if (s.startsWith('>')) {
+      const minVal = parseValue(s.substring(1));
       if (minVal !== null) return numValue > minVal ? 'normal' : 'abnormal';
-    } else if (cleanStandard.startsWith('<')) {
-      const maxVal = parseValue(cleanStandard.substring(1));
+    } else if (s.startsWith('<')) {
+      const maxVal = parseValue(s.substring(1));
       if (maxVal !== null) return numValue < maxVal ? 'normal' : 'abnormal';
-    } else if (cleanStandard.includes('~') || cleanStandard.includes('-')) {
-      const separator = cleanStandard.includes('~') ? '~' : '-';
-      const parts = cleanStandard.split(separator);
+    } else if (s.includes('~')) {
+      const parts = s.split('~');
       if (parts.length === 2) {
         const minVal = parseValue(parts[0]);
         const maxVal = parseValue(parts[1]);
@@ -165,18 +264,90 @@ export const Maintenance: React.FC = () => {
         }
       }
     } else {
-      const exactVal = parseValue(cleanStandard);
+      const rangeMatch = s.match(/^([\d.]+)\s*[-–]\s*([\d.]+)$/);
+      if (rangeMatch) {
+        const minVal = parseFloat(rangeMatch[1]);
+        const maxVal = parseFloat(rangeMatch[2]);
+        if (!isNaN(minVal) && !isNaN(maxVal) && maxVal > minVal) {
+          return numValue >= minVal && numValue <= maxVal ? 'normal' : 'abnormal';
+        }
+      }
+
+      const exactVal = parseValue(s);
       if (exactVal !== null) {
         return Math.abs(numValue - exactVal) < 0.001 ? 'normal' : 'abnormal';
       }
     }
-    
-    const stdNum = parseValue(standard);
-    if (stdNum !== null) {
-      return numValue >= stdNum ? 'normal' : 'abnormal';
-    }
-    
+
     return 'unknown';
+  };
+
+  const handleConvertToDefect = (source: 'finding' | 'measurement', detail: string) => {
+    setDefectFormSource(source);
+    setDefectFormSourceDetail(detail);
+    setDefectFormTitle('');
+    setDefectFormSeverity('minor');
+    setDefectFormAssignedTo('');
+    setShowDefectForm(true);
+  };
+
+  const handleSubmitDefect = () => {
+    if (!selectedRecord || !defectFormTitle.trim()) return;
+    const newDefect: Defect = {
+      id: `DEF-${Date.now()}`,
+      title: defectFormTitle,
+      description: defectFormSourceDetail,
+      severity: defectFormSeverity,
+      status: 'open',
+      equipmentId: selectedRecord.equipmentId,
+      equipmentName: selectedRecord.equipmentName,
+      maintenanceRecordId: selectedRecord.id,
+      sourceType: defectFormSource,
+      sourceDetail: defectFormSourceDetail,
+      assignedTo: defectFormAssignedTo,
+      createdDate: new Date().toISOString().split('T')[0],
+      resolvedDate: '',
+      resolution: '',
+      verifiedBy: '',
+      verifiedDate: '',
+      verifiedResult: ''
+    };
+    addDefect(newDefect);
+    setShowDefectForm(false);
+    setDefectFormTitle('');
+    setDefectFormSeverity('minor');
+    setDefectFormAssignedTo('');
+    setDefectFormSourceDetail('');
+  };
+
+  const handleAdvanceDefectStatus = () => {
+    if (!selectedDefect) return;
+    const nextStatus = getNextStatus(selectedDefect.status);
+    if (!nextStatus) return;
+
+    const updates: Partial<Defect> = { status: nextStatus };
+
+    if (nextStatus === 'resolved') {
+      updates.resolution = defectResolution;
+      updates.resolvedDate = new Date().toISOString().split('T')[0];
+    }
+
+    if (nextStatus === 'assigned' && defectFormAssignedTo) {
+      updates.assignedTo = defectFormAssignedTo;
+    }
+
+    if (nextStatus === 'verified') {
+      updates.verifiedBy = defectVerifiedBy;
+      updates.verifiedDate = new Date().toISOString().split('T')[0];
+      updates.verifiedResult = defectVerifiedResult;
+    }
+
+    updateDefect(selectedDefect.id, updates);
+    setSelectedDefect({ ...selectedDefect, ...updates, status: nextStatus });
+    setDefectResolution('');
+    setDefectVerifiedBy('');
+    setDefectVerifiedResult('');
+    setDefectFormAssignedTo('');
   };
 
   return (
@@ -188,7 +359,7 @@ export const Maintenance: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <DataCard
           title="设备总数"
           value={equipment.length}
@@ -213,6 +384,12 @@ export const Maintenance: React.FC = () => {
           icon={CheckCircle}
           color="#10B981"
         />
+        <DataCard
+          title="未关闭缺陷"
+          value={unclosedDefectCount}
+          icon={Shield}
+          color="#DC2626"
+        />
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200">
@@ -220,7 +397,8 @@ export const Maintenance: React.FC = () => {
           {[
             { key: 'equipment', label: '设备台账', icon: Cog },
             { key: 'records', label: '检修记录', icon: FileText },
-            { key: 'spareparts', label: '备件管理', icon: Package }
+            { key: 'spareparts', label: '备件管理', icon: Package },
+            { key: 'defects', label: '缺陷闭环', icon: Shield }
           ].map(item => {
             const Icon = item.icon;
             return (
@@ -284,62 +462,70 @@ export const Maintenance: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {filteredEquipment.map(eq => (
-                  <div
-                    key={eq.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-[#0D47A1] transition-colors cursor-pointer"
-                    onClick={() => setSelectedEquipment(eq)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-3">
-                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                          eq.status === 'normal' ? 'bg-green-100' :
-                          eq.status === 'maintenance' ? 'bg-yellow-100' : 'bg-red-100'
-                        }`}>
-                          <Cog size={24} className={`${
-                            eq.status === 'normal' ? 'text-green-600' :
-                            eq.status === 'maintenance' ? 'text-yellow-600' : 'text-red-600'
-                          }`} />
-                        </div>
-                        <div>
-                          <h4 className="font-medium text-gray-800">{eq.name}</h4>
-                          <p className="text-sm text-gray-500">{eq.code}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${getEquipmentStatusColor(eq.status)}`}>
-                              {getStatusLabel(eq.status)}
-                            </span>
-                            <span className="text-xs text-gray-400">{eq.system}</span>
+                {filteredEquipment.map(eq => {
+                  const unclosedCount = getUnclosedDefectCount(eq.id);
+                  return (
+                    <div
+                      key={eq.id}
+                      className="border border-gray-200 rounded-lg p-4 hover:border-[#0D47A1] transition-colors cursor-pointer"
+                      onClick={() => setSelectedEquipment(eq)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                            eq.status === 'normal' ? 'bg-green-100' :
+                            eq.status === 'maintenance' ? 'bg-yellow-100' : 'bg-red-100'
+                          }`}>
+                            <Cog size={24} className={`${
+                              eq.status === 'normal' ? 'text-green-600' :
+                              eq.status === 'maintenance' ? 'text-yellow-600' : 'text-red-600'
+                            }`} />
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-gray-800">{eq.name}</h4>
+                            <p className="text-sm text-gray-500">{eq.code}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${getEquipmentStatusColor(eq.status)}`}>
+                                {getStatusLabel(eq.status)}
+                              </span>
+                              <span className="text-xs text-gray-400">{eq.system}</span>
+                            </div>
                           </div>
                         </div>
+                        <Eye size={18} className="text-gray-400" />
                       </div>
-                      <Eye size={18} className="text-gray-400" />
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-xs text-gray-500">位置</p>
-                        <p className="text-sm text-gray-800">{eq.location}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">上次检修</p>
-                        <p className="text-sm text-gray-800">{formatDate(eq.lastMaintenance)}</p>
-                      </div>
-                    </div>
-                    {eq.status === 'maintenance' && (
-                      <div className="mt-3">
-                        <div className="flex justify-between text-xs text-gray-500 mb-1">
-                          <span>检修进度</span>
-                          <span>预计完成: {formatDate(eq.nextMaintenance)}</span>
+                      <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-xs text-gray-500">位置</p>
+                          <p className="text-sm text-gray-800">{eq.location}</p>
                         </div>
-                        <ProgressBar
-                          value={65}
-                          height="4px"
-                          showLabel={false}
-                          color="#E65100"
-                        />
+                        <div>
+                          <p className="text-xs text-gray-500">上次检修</p>
+                          <p className="text-sm text-gray-800">{formatDate(eq.lastMaintenance)}</p>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {eq.status === 'maintenance' && (
+                        <div className="mt-3">
+                          <div className="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>检修进度</span>
+                            <span>预计完成: {formatDate(eq.nextMaintenance)}</span>
+                          </div>
+                          <ProgressBar
+                            value={65}
+                            height="4px"
+                            showLabel={false}
+                            color="#E65100"
+                          />
+                        </div>
+                      )}
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <p className={`text-xs ${unclosedCount > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
+                          未关闭缺陷: {unclosedCount}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -433,6 +619,68 @@ export const Maintenance: React.FC = () => {
                             <span className={`px-2 py-1 text-xs font-medium rounded ${getPartStatusColor(part.status)}`}>
                               {getPartStatusLabel(part.status)}
                             </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'defects' && (
+            <div className="space-y-4">
+              {defects.length === 0 ? (
+                <div className="py-12 text-center text-gray-500">
+                  <Shield size={48} className="mx-auto mb-4 text-gray-300" />
+                  <p>暂无缺陷记录</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">标题</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">严重程度</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">来源类型</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">责任人</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {defects.map(defect => (
+                        <tr key={defect.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium text-gray-800">{defect.title}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{defect.equipmentName}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSeverityColor(defect.severity)}`}>
+                              {getSeverityLabel(defect.severity)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{getSourceTypeLabel(defect.sourceType)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{defect.assignedTo || '-'}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDefectStatusColor(defect.status)}`}>
+                              {getDefectStatusLabel(defect.status)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => {
+                                setSelectedDefect(defect);
+                                setDefectResolution('');
+                                setDefectVerifiedBy('');
+                                setDefectVerifiedResult('');
+                                setDefectFormAssignedTo('');
+                              }}
+                              className="p-1 text-gray-400 hover:bg-gray-100 rounded"
+                              title="查看详情"
+                            >
+                              <Eye size={18} />
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -600,8 +848,17 @@ export const Maintenance: React.FC = () => {
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                   <div className="flex items-start gap-2">
                     <AlertCircle size={18} className="text-yellow-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium text-yellow-800">检查发现</p>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-yellow-800">检查发现</p>
+                        <button
+                          onClick={() => handleConvertToDefect('finding', selectedRecord.findings)}
+                          className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 bg-red-50 rounded hover:bg-red-100 transition-colors"
+                        >
+                          <Plus size={12} />
+                          转为缺陷项
+                        </button>
+                      </div>
                       <p className="text-sm text-yellow-700 mt-1">{selectedRecord.findings}</p>
                     </div>
                   </div>
@@ -620,6 +877,7 @@ export const Maintenance: React.FC = () => {
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">单位</th>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">标准值</th>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">结果</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -649,6 +907,16 @@ export const Maintenance: React.FC = () => {
                                     <AlertCircle size={14} />
                                     待判定
                                   </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                {status === 'abnormal' && (
+                                  <button
+                                    onClick={() => handleConvertToDefect('measurement', `${m.name}: 测量值${m.value}${m.unit}, 标准值${m.standard}`)}
+                                    className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 bg-red-50 rounded hover:bg-red-100 transition-colors"
+                                  >
+                                    转为缺陷
+                                  </button>
                                 )}
                               </td>
                             </tr>
@@ -696,6 +964,316 @@ export const Maintenance: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {selectedRecordDefects.length > 0 && (
+                <div>
+                  <h5 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <Shield size={16} className="text-red-500" />
+                    关联缺陷
+                  </h5>
+                  <div className="space-y-2">
+                    {selectedRecordDefects.map(d => (
+                      <div
+                        key={d.id}
+                        className="border border-gray-200 rounded-lg p-3 cursor-pointer hover:border-[#0D47A1] transition-colors"
+                        onClick={() => {
+                          setSelectedDefect(d);
+                          setSelectedRecord(null);
+                          setDefectResolution('');
+                          setDefectVerifiedBy('');
+                          setDefectVerifiedResult('');
+                          setDefectFormAssignedTo('');
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSeverityColor(d.severity)}`}>
+                              {getSeverityLabel(d.severity)}
+                            </span>
+                            <span className="text-sm font-medium text-gray-800">{d.title}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDefectStatusColor(d.status)}`}>
+                            {getDefectStatusLabel(d.status)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">来源: {getSourceTypeLabel(d.sourceType)} | 责任人: {d.assignedTo || '未分配'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedDefect && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                <Shield size={18} className="text-red-500" />
+                缺陷详情
+              </h3>
+              <button
+                onClick={() => setSelectedDefect(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="flex items-start gap-3">
+                <div className="w-12 h-12 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle size={24} className="text-red-600" />
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-800 text-lg">{selectedDefect.title}</h4>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSeverityColor(selectedDefect.severity)}`}>
+                      {getSeverityLabel(selectedDefect.severity)}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDefectStatusColor(selectedDefect.status)}`}>
+                      {getDefectStatusLabel(selectedDefect.status)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-gray-500">缺陷编号</p>
+                  <p className="text-sm font-medium text-gray-800 font-mono">{selectedDefect.id}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">所属设备</p>
+                  <p className="text-sm font-medium text-gray-800">{selectedDefect.equipmentName}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">来源类型</p>
+                  <p className="text-sm font-medium text-gray-800">{getSourceTypeLabel(selectedDefect.sourceType)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">责任人</p>
+                  <p className="text-sm font-medium text-gray-800">{selectedDefect.assignedTo || '未分配'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">创建日期</p>
+                  <p className="text-sm font-medium text-gray-800">{selectedDefect.createdDate}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">解决日期</p>
+                  <p className="text-sm font-medium text-gray-800">{selectedDefect.resolvedDate || '-'}</p>
+                </div>
+              </div>
+
+              {selectedDefect.description && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">缺陷描述</p>
+                  <p className="text-sm text-gray-800 bg-gray-50 p-3 rounded-lg">{selectedDefect.description}</p>
+                </div>
+              )}
+
+              {selectedDefect.sourceDetail && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">来源详情</p>
+                  <p className="text-sm text-gray-800 bg-gray-50 p-3 rounded-lg">{selectedDefect.sourceDetail}</p>
+                </div>
+              )}
+
+              {selectedDefect.resolution && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <p className="text-sm font-medium text-green-800">处理结果</p>
+                  <p className="text-sm text-green-700 mt-1">{selectedDefect.resolution}</p>
+                </div>
+              )}
+
+              {selectedDefect.verifiedResult && (
+                <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+                  <p className="text-sm font-medium text-teal-800">验证结果</p>
+                  <p className="text-sm text-teal-700 mt-1">{selectedDefect.verifiedResult}</p>
+                  {selectedDefect.verifiedBy && (
+                    <p className="text-xs text-teal-600 mt-1">验证人: {selectedDefect.verifiedBy} | 验证日期: {selectedDefect.verifiedDate}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                  <GitBranch size={14} />
+                  状态流转
+                </p>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {(['open', 'assigned', 'in_progress', 'resolved', 'verified', 'closed'] as DefectStatus[]).map((s, idx) => (
+                    <React.Fragment key={s}>
+                      {idx > 0 && <ArrowRight size={14} className="text-gray-300" />}
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        s === selectedDefect.status
+                          ? getDefectStatusColor(s) + ' ring-2 ring-offset-1 ring-gray-300'
+                          : selectedDefect.status === 'closed' || ['closed', 'verified'].includes(selectedDefect.status) && ['resolved', 'verified', 'closed'].indexOf(s) <= ['resolved', 'verified', 'closed'].indexOf(selectedDefect.status)
+                            ? 'bg-gray-200 text-gray-600'
+                            : 'bg-gray-100 text-gray-400'
+                      }`}>
+                        {getDefectStatusLabel(s)}
+                      </span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+
+              {(selectedDefect.status === 'open' || selectedDefect.status === 'assigned' || selectedDefect.status === 'in_progress' || selectedDefect.status === 'resolved') && (
+                <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                  <h5 className="font-medium text-gray-800 flex items-center gap-2">
+                    <ArrowRight size={16} />
+                    推进至: {getNextStatusLabel(selectedDefect.status)}
+                  </h5>
+
+                  {selectedDefect.status === 'open' && (
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">分配责任人</label>
+                      <input
+                        type="text"
+                        value={defectFormAssignedTo}
+                        onChange={(e) => setDefectFormAssignedTo(e.target.value)}
+                        placeholder="请输入责任人姓名"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm"
+                      />
+                    </div>
+                  )}
+
+                  {selectedDefect.status === 'resolved' && (
+                    <>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">验证人</label>
+                        <input
+                          type="text"
+                          value={defectVerifiedBy}
+                          onChange={(e) => setDefectVerifiedBy(e.target.value)}
+                          placeholder="请输入验证人姓名"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">验证结果</label>
+                        <textarea
+                          value={defectVerifiedResult}
+                          onChange={(e) => setDefectVerifiedResult(e.target.value)}
+                          placeholder="请输入验证结果"
+                          rows={3}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm resize-none"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {(selectedDefect.status === 'in_progress') && (
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">处理结果</label>
+                      <textarea
+                        value={defectResolution}
+                        onChange={(e) => setDefectResolution(e.target.value)}
+                        placeholder="请输入处理结果"
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm resize-none"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleAdvanceDefectStatus}
+                    className="px-4 py-2 bg-[#0D47A1] text-white text-sm font-medium rounded-md hover:bg-[#0A3A84] transition-colors flex items-center gap-2"
+                  >
+                    <ArrowRight size={14} />
+                    确认推进至{getNextStatusLabel(selectedDefect.status)}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDefectForm && selectedRecord && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                <Plus size={18} />
+                转为缺陷项
+              </h3>
+              <button
+                onClick={() => setShowDefectForm(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">来源类型</label>
+                <p className="text-sm font-medium text-gray-800 bg-gray-50 p-2 rounded">
+                  {getSourceTypeLabel(defectFormSource)}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">来源详情</label>
+                <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded">{defectFormSourceDetail}</p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">缺陷标题 <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={defectFormTitle}
+                  onChange={(e) => setDefectFormTitle(e.target.value)}
+                  placeholder="请输入缺陷标题"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">严重程度</label>
+                <div className="flex gap-3">
+                  {(['minor', 'major', 'critical'] as DefectSeverity[]).map(sev => (
+                    <button
+                      key={sev}
+                      onClick={() => setDefectFormSeverity(sev)}
+                      className={`flex-1 px-3 py-2 rounded-md text-sm font-medium border transition-colors ${
+                        defectFormSeverity === sev
+                          ? sev === 'minor' ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : sev === 'major' ? 'border-orange-500 bg-orange-50 text-orange-700'
+                              : 'border-red-500 bg-red-50 text-red-700'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {getSeverityLabel(sev)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">责任人</label>
+                <input
+                  type="text"
+                  value={defectFormAssignedTo}
+                  onChange={(e) => setDefectFormAssignedTo(e.target.value)}
+                  placeholder="请输入责任人姓名"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] focus:border-transparent text-sm"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setShowDefectForm(false)}
+                  className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSubmitDefect}
+                  disabled={!defectFormTitle.trim()}
+                  className="px-4 py-2 bg-[#0D47A1] text-white text-sm font-medium rounded-md hover:bg-[#0A3A84] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  确认创建
+                </button>
+              </div>
             </div>
           </div>
         </div>

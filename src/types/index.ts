@@ -11,6 +11,8 @@ export type PartStatus = 'reserved' | 'issued' | 'used' | 'returned';
 export type QualityCheckType = 'hidden' | 'witness' | 'review';
 export type QualityCheckPoint = 'H' | 'W' | 'R';
 export type QualityCheckStatus = 'pending' | 'in_progress' | 'passed' | 'failed' | 'rework';
+export type DefectStatus = 'open' | 'assigned' | 'in_progress' | 'resolved' | 'verified' | 'closed';
+export type DefectSeverity = 'minor' | 'major' | 'critical';
 export type LessonCategory = 'schedule' | 'safety' | 'quality' | 'cost' | 'radiation';
 export type LessonSeverity = 'low' | 'medium' | 'high' | 'critical';
 export type LessonStatus = 'open' | 'in_progress' | 'closed' | 'verified';
@@ -151,6 +153,32 @@ export interface QualityCheck {
   status: QualityCheckStatus;
   result: string;
   attachments: string[];
+  reworkCount?: number;
+  relatedDefectId?: string;
+  equipmentId?: string;
+  maintenanceRecordId?: string;
+  isFirstCheck?: boolean;
+}
+
+export interface Defect {
+  id: string;
+  title: string;
+  description: string;
+  severity: DefectSeverity;
+  status: DefectStatus;
+  equipmentId: string;
+  equipmentName: string;
+  maintenanceRecordId: string;
+  sourceType: 'measurement' | 'finding' | 'quality_check';
+  sourceDetail: string;
+  assignedTo: string;
+  createdDate: string;
+  resolvedDate: string;
+  resolution: string;
+  verifiedBy: string;
+  verifiedDate: string;
+  verifiedResult: string;
+  qualityCheckId?: string;
 }
 
 export interface LessonLearned {

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQualityStore } from '@/store/qualityStore';
+import { useEquipmentStore } from '@/store/equipmentStore';
 import { DataCard } from '@/components/DataCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -22,7 +23,8 @@ import {
   AlertCircle,
   BarChart3,
   CheckCheck,
-  Eye as EyeIcon
+  Eye as EyeIcon,
+  RotateCcw
 } from 'lucide-react';
 import { formatDate } from '@/utils/date';
 import { getCategoryLabel, getStatusLabel, getSeverityColor
@@ -42,11 +44,15 @@ export const Quality: React.FC = () => {
     getChecksByStatus,
     getPendingChecks,
     getStatistics,
-    updateCheckStatus
+    updateCheckStatus,
+    updateCheckFields
   } = useQualityStore();
-  
+
+  const { maintenanceRecords } = useEquipmentStore();
+
   const statistics = useMemo(() => getStatistics(), [checks, getStatistics]);
   const pendingChecks = useMemo(() => getPendingChecks(), [checks, getPendingChecks]);
+  const reworkChecks = useMemo(() => getChecksByStatus('rework'), [checks, getChecksByStatus]);
 
   const [activeTab, setActiveTab] = useState<TabMode>('checks');
   const [typeFilter, setTypeFilter] = useState<FilterType>('all');
@@ -55,6 +61,10 @@ export const Quality: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCheck, setSelectedCheck] = useState<QualityCheck | null>(null);
   const [resultForm, setResultForm] = useState('');
+  const [pendingAction, setPendingAction] = useState<'rework' | 'fail' | null>(null);
+  const [relatedRecordId, setRelatedRecordId] = useState('');
+  const [recheckCheck, setRecheckCheck] = useState<QualityCheck | null>(null);
+  const [recheckResult, setRecheckResult] = useState('');
 
   const filteredChecks = useMemo(() => {
     return checks.filter(check => {
@@ -95,31 +105,136 @@ export const Quality: React.FC = () => {
     return colors[point] || 'bg-gray-100 text-gray-700';
   };
 
+  const closeCheckModal = () => {
+    setSelectedCheck(null);
+    setResultForm('');
+    setPendingAction(null);
+    setRelatedRecordId('');
+  };
+
   const handlePassCheck = () => {
     if (selectedCheck) {
       updateCheckStatus(selectedCheck.id, 'passed', resultForm || '检查合格，同意放行。');
-      setSelectedCheck(null);
-      setResultForm('');
+      closeCheckModal();
     }
   };
 
   const handleFailCheck = () => {
     if (selectedCheck) {
+      const record = maintenanceRecords.find(r => r.id === relatedRecordId);
+      if (relatedRecordId && record) {
+        updateCheckFields(selectedCheck.id, {
+          equipmentId: record.equipmentId,
+          maintenanceRecordId: record.id
+        });
+      }
       updateCheckStatus(selectedCheck.id, 'failed', resultForm || '检查不合格，需返工。');
-      setSelectedCheck(null);
-      setResultForm('');
+      closeCheckModal();
     }
   };
 
   const handleReworkCheck = () => {
     if (selectedCheck) {
+      const record = maintenanceRecords.find(r => r.id === relatedRecordId);
+      if (relatedRecordId && record) {
+        updateCheckFields(selectedCheck.id, {
+          equipmentId: record.equipmentId,
+          maintenanceRecordId: record.id
+        });
+      }
       updateCheckStatus(selectedCheck.id, 'rework', resultForm || '需返工处理后重新报验。');
-      setSelectedCheck(null);
-      setResultForm('');
+      closeCheckModal();
     }
   };
 
-  const maxTrendValue = Math.max(...trendData.map(d => d.passed + d.failed + d.rework), 1);
+  const handleRecheckPass = () => {
+    if (recheckCheck) {
+      updateCheckStatus(recheckCheck.id, 'passed', recheckResult || '复验合格，同意放行。');
+      setRecheckCheck(null);
+      setRecheckResult('');
+    }
+  };
+
+  const handleRecheckFail = () => {
+    if (recheckCheck) {
+      updateCheckStatus(recheckCheck.id, 'failed', recheckResult || '复验不合格。');
+      setRecheckCheck(null);
+      setRecheckResult('');
+    }
+  };
+
+  const maxTrendValue = Math.max(
+    ...trendData.map(d => d.passed + d.failed + d.rework + (d.recheckPassed || 0)),
+    1
+  );
+
+  const renderCheckCard = (check: QualityCheck, actionButton: React.ReactNode) => (
+    <div
+      key={check.id}
+      className="border border-gray-200 rounded-lg p-4 hover:border-[#0D47A1] transition-colors"
+    >
+      <div className="flex items-start justify-between">
+        <div className="flex items-start gap-4">
+          <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+            check.type === 'hidden' ? 'bg-purple-100' :
+            check.type === 'witness' ? 'bg-blue-100' : 'bg-gray-100'
+          }`}>
+            {check.type === 'hidden' ? (
+              <EyeOff size={24} className="text-purple-600" />
+            ) : check.type === 'witness' ? (
+              <EyeIcon size={24} className="text-blue-600" />
+            ) : (
+              <FileText size={24} className="text-gray-600" />
+            )}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${getPointColor(check.point)}`}>
+                {check.point}
+              </span>
+              <span className={`px-2 py-0.5 text-xs font-medium rounded ${getCheckTypeColor(check.type)}`}>
+                {getCheckTypeLabel(check.type)}
+              </span>
+              <StatusBadge status={check.status} />
+              {check.status === 'passed' && (check.reworkCount || 0) > 0 && (
+                <span className="px-2 py-0.5 text-xs font-medium rounded bg-teal-100 text-teal-700">
+                  复验通过
+                </span>
+              )}
+              {(check.reworkCount || 0) > 0 && check.status === 'rework' && (
+                <span className="px-2 py-0.5 text-xs font-medium rounded bg-yellow-100 text-yellow-700">
+                  已返工 {check.reworkCount} 次
+                </span>
+              )}
+            </div>
+            <h4 className="font-medium text-gray-800 mt-2">{check.name}</h4>
+            <p className="text-sm text-gray-500 mt-1">{check.description}</p>
+            <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
+              <span className="flex items-center gap-1">
+                <User size={14} />
+                {check.inspector}
+              </span>
+              <span className="flex items-center gap-1">
+                <Calendar size={14} />
+                {formatDate(check.checkDate)}
+              </span>
+              <span className="flex items-center gap-1">
+                <FileText size={14} />
+                {check.taskName}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {actionButton}
+        </div>
+      </div>
+      <div className="mt-4 pt-4 border-t border-gray-100">
+        <p className="text-xs text-gray-500">验收标准</p>
+        <p className="text-sm text-gray-800 mt-1">{check.standard}</p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -130,7 +245,7 @@ export const Quality: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <DataCard
           title="质量检查点"
           value={statistics.total}
@@ -157,6 +272,12 @@ export const Quality: React.FC = () => {
           icon={CheckCheck}
           color="#8B5CF6"
         />
+        <DataCard
+          title="复验通过"
+          value={statistics.recheckPassed}
+          icon={RotateCcw}
+          color="#0D9488"
+        />
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200">
@@ -179,9 +300,9 @@ export const Quality: React.FC = () => {
               >
                 <Icon size={16} />
                 {item.label}
-                {item.key === 'pending' && pendingChecks.length > 0 && (
+                {item.key === 'pending' && (pendingChecks.length + reworkChecks.length) > 0 && (
                   <span className="px-2 py-0.5 bg-orange-500 text-white text-xs rounded-full">
-                    {pendingChecks.length}
+                    {pendingChecks.length + reworkChecks.length}
                   </span>
                 )}
               </button>
@@ -269,7 +390,16 @@ export const Quality: React.FC = () => {
                             {check.point}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-medium text-gray-800">{check.name}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-gray-800">{check.name}</span>
+                            {check.status === 'passed' && (check.reworkCount || 0) > 0 && (
+                              <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-teal-100 text-teal-700">
+                                复验通过
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 text-xs font-medium rounded ${getCheckTypeColor(check.type)}`}>
                             {getCheckTypeLabel(check.type)}
@@ -310,78 +440,49 @@ export const Quality: React.FC = () => {
 
           {activeTab === 'pending' && (
             <div className="space-y-4">
-              {pendingChecks.length === 0 ? (
+              {pendingChecks.length === 0 && reworkChecks.length === 0 ? (
                 <div className="py-12 text-center text-gray-500">
                   <CheckCircle size={48} className="mx-auto mb-4 text-green-300" />
                   <p>所有检查点均已完成验收</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {pendingChecks.map(check => (
-                    <div
-                      key={check.id}
-                      className="border border-gray-200 rounded-lg p-4 hover:border-[#0D47A1] transition-colors"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-4">
-                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                            check.type === 'hidden' ? 'bg-purple-100' :
-                            check.type === 'witness' ? 'bg-blue-100' : 'bg-gray-100'
-                          }`}>
-                            {check.type === 'hidden' ? (
-                              <EyeOff size={24} className="text-purple-600" />
-                            ) : check.type === 'witness' ? (
-                              <EyeIcon size={24} className="text-blue-600" />
-                            ) : (
-                              <FileText size={24} className="text-gray-600" />
-                            )}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${getPointColor(check.point)}`}>
-                                {check.point}
-                              </span>
-                              <span className={`px-2 py-0.5 text-xs font-medium rounded ${getCheckTypeColor(check.type)}`}>
-                                {getCheckTypeLabel(check.type)}
-                              </span>
-                              <StatusBadge status={check.status} />
-                            </div>
-                            <h4 className="font-medium text-gray-800 mt-2">{check.name}</h4>
-                            <p className="text-sm text-gray-500 mt-1">{check.description}</p>
-                            <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
-                              <span className="flex items-center gap-1">
-                                <User size={14} />
-                                {check.inspector}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Calendar size={14} />
-                                {formatDate(check.checkDate)}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <FileText size={14} />
-                                {check.taskName}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              setSelectedCheck(check);
-                              setResultForm('');
-                            }}
-                            className="px-4 py-2 bg-[#0D47A1] text-white text-sm rounded-md hover:bg-[#1565C0] transition-colors"
-                          >
-                            验收
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-4 pt-4 border-t border-gray-100">
-                        <p className="text-xs text-gray-500">验收标准</p>
-                        <p className="text-sm text-gray-800 mt-1">{check.standard}</p>
-                      </div>
-                    </div>
-                  ))}
+                  {pendingChecks.length > 0 && (
+                    <>
+                      {pendingChecks.length > 0 && reworkChecks.length > 0 && (
+                        <h4 className="text-sm font-semibold text-gray-600 uppercase tracking-wider">待验收</h4>
+                      )}
+                      {pendingChecks.map(check => renderCheckCard(check, (
+                        <button
+                          onClick={() => {
+                            setSelectedCheck(check);
+                            setResultForm('');
+                          }}
+                          className="px-4 py-2 bg-[#0D47A1] text-white text-sm rounded-md hover:bg-[#1565C0] transition-colors"
+                        >
+                          验收
+                        </button>
+                      )))}
+                    </>
+                  )}
+                  {reworkChecks.length > 0 && (
+                    <>
+                      {pendingChecks.length > 0 && <div className="pt-2" />}
+                      <h4 className="text-sm font-semibold text-gray-600 uppercase tracking-wider">返工待复验</h4>
+                      {reworkChecks.map(check => renderCheckCard(check, (
+                        <button
+                          onClick={() => {
+                            setRecheckCheck(check);
+                            setRecheckResult('');
+                          }}
+                          className="px-4 py-2 bg-[#0D9488] text-white text-sm rounded-md hover:bg-[#0F766E] transition-colors flex items-center gap-1"
+                        >
+                          <RotateCcw size={14} />
+                          复验
+                        </button>
+                      )))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -410,11 +511,18 @@ export const Quality: React.FC = () => {
                               title={`返工: ${item.rework}`}
                             />
                           )}
+                          {(item.recheckPassed || 0) > 0 && (
+                            <div
+                              className="w-full"
+                              style={{ height: `${((item.recheckPassed || 0) / maxTrendValue) * 100}%`, minHeight: (item.recheckPassed || 0) > 0 ? '8px' : 0, backgroundColor: '#0D9488' }}
+                              title={`复验通过: ${item.recheckPassed || 0}`}
+                            />
+                          )}
                           {item.passed > 0 && (
                             <div
                               className="w-full bg-green-500 rounded-b"
                               style={{ height: `${(item.passed / maxTrendValue) * 100}%`, minHeight: item.passed > 0 ? '8px' : 0 }}
-                              title={`通过: ${item.passed}`}
+                              title={`首次通过: ${item.passed}`}
                             />
                           )}
                         </div>
@@ -422,10 +530,14 @@ export const Quality: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                  <div className="flex items-center justify-center gap-6 mt-4">
+                  <div className="flex items-center justify-center gap-6 mt-4 flex-wrap">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 bg-green-500 rounded" />
-                      <span className="text-sm text-gray-600">通过</span>
+                      <span className="text-sm text-gray-600">首次通过</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded" style={{ backgroundColor: '#0D9488' }} />
+                      <span className="text-sm text-gray-600">复验通过</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 bg-yellow-500 rounded" />
@@ -537,14 +649,16 @@ export const Quality: React.FC = () => {
                       {getCheckTypeLabel(selectedCheck.type)}
                     </span>
                     <StatusBadge status={selectedCheck.status} />
+                    {(selectedCheck.reworkCount || 0) > 0 && (
+                      <span className="px-2 py-0.5 text-xs font-medium rounded bg-yellow-100 text-yellow-700">
+                        已返工 {selectedCheck.reworkCount} 次
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
               <button
-                onClick={() => {
-                  setSelectedCheck(null);
-                  setResultForm('');
-                }}
+                onClick={closeCheckModal}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X size={20} />
@@ -611,31 +725,153 @@ export const Quality: React.FC = () => {
                     className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] resize-none"
                     rows={3}
                   />
-                  <div className="flex gap-3 mt-4">
-                    <button
-                      onClick={handlePassCheck}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-                    >
-                      <CheckCircle size={16} />
-                      验收通过
-                    </button>
-                    <button
-                      onClick={handleReworkCheck}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
-                    >
-                      <AlertCircle size={16} />
-                      需要返工
-                    </button>
-                    <button
-                      onClick={handleFailCheck}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
-                    >
-                      <XCircle size={16} />
-                      不通过
-                    </button>
-                  </div>
+
+                  {pendingAction && (
+                    <div className="mt-4 p-4 bg-gray-50 rounded-lg space-y-3">
+                      <p className="text-sm font-medium text-gray-700">
+                        关联设备/检修记录
+                        <span className="text-xs text-gray-400 ml-1">（可选）</span>
+                      </p>
+                      <select
+                        value={relatedRecordId}
+                        onChange={(e) => setRelatedRecordId(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D47A1] bg-white"
+                      >
+                        <option value="">不关联</option>
+                        {maintenanceRecords.map(record => (
+                          <option key={record.id} value={record.id}>
+                            {record.equipmentName} - {record.type} ({record.id.slice(-6)})
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => {
+                            if (pendingAction === 'rework') handleReworkCheck();
+                            else if (pendingAction === 'fail') handleFailCheck();
+                          }}
+                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 text-white rounded-md transition-colors ${
+                            pendingAction === 'rework'
+                              ? 'bg-yellow-600 hover:bg-yellow-700'
+                              : 'bg-red-600 hover:bg-red-700'
+                          }`}
+                        >
+                          {pendingAction === 'rework' ? (
+                            <>
+                              <AlertCircle size={16} />
+                              确认返工
+                            </>
+                          ) : (
+                            <>
+                              <XCircle size={16} />
+                              确认不通过
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPendingAction(null);
+                            setRelatedRecordId('');
+                          }}
+                          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!pendingAction && (
+                    <div className="flex gap-3 mt-4">
+                      <button
+                        onClick={handlePassCheck}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                      >
+                        <CheckCircle size={16} />
+                        验收通过
+                      </button>
+                      <button
+                        onClick={() => setPendingAction('rework')}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
+                      >
+                        <AlertCircle size={16} />
+                        需要返工
+                      </button>
+                      <button
+                        onClick={() => setPendingAction('fail')}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                      >
+                        <XCircle size={16} />
+                        不通过
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {recheckCheck && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-teal-100">
+                  <RotateCcw size={20} className="text-teal-700" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-800">复验</h3>
+                  <p className="text-sm text-gray-500">{recheckCheck.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setRecheckCheck(null);
+                  setRecheckResult('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-yellow-50 rounded-lg p-3 border border-yellow-200">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={16} className="text-yellow-600" />
+                  <span className="text-sm text-yellow-800">
+                    该检查点已返工 {recheckCheck.reworkCount || 0} 次，请进行复验
+                  </span>
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-800 mb-2">复验结论</p>
+                <textarea
+                  value={recheckResult}
+                  onChange={(e) => setRecheckResult(e.target.value)}
+                  placeholder="请填写复验结论..."
+                  className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0D9488] resize-none"
+                  rows={3}
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleRecheckPass}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 transition-colors"
+                  style={{ backgroundColor: '#0D9488' }}
+                >
+                  <CheckCircle size={16} />
+                  复验通过
+                </button>
+                <button
+                  onClick={handleRecheckFail}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                >
+                  <XCircle size={16} />
+                  复验不通过
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -7,6 +7,7 @@ interface TrendDataItem {
   passed: number;
   failed: number;
   rework: number;
+  recheckPassed: number;
 }
 
 interface Statistics {
@@ -16,6 +17,7 @@ interface Statistics {
   inProgress: number;
   failed: number;
   rework: number;
+  recheckPassed: number;
   passRate: number;
   avgProcessTime: number;
 }
@@ -27,6 +29,7 @@ interface QualityState {
   setChecks: (checks: QualityCheck[]) => void;
   setSelectedCheck: (check: QualityCheck | null) => void;
   updateCheckStatus: (id: string, status: QualityCheck['status'], result?: string) => void;
+  updateCheckFields: (id: string, updates: Partial<QualityCheck>) => void;
   getChecksByType: (type: string) => QualityCheck[];
   getChecksByPoint: (point: string) => QualityCheck[];
   getChecksByStatus: (status: string) => QualityCheck[];
@@ -42,6 +45,7 @@ const calculateStatistics = (checks: QualityCheck[]): Statistics => {
   const inProgress = checks.filter(c => c.status === 'in_progress').length;
   const failed = checks.filter(c => c.status === 'failed').length;
   const rework = checks.filter(c => c.status === 'rework').length;
+  const recheckPassed = checks.filter(c => c.status === 'passed' && (c.reworkCount || 0) > 0).length;
   const completed = passed + failed;
   const passRate = completed > 0 ? Math.round((passed / completed) * 100) : 100;
   
@@ -52,6 +56,7 @@ const calculateStatistics = (checks: QualityCheck[]): Statistics => {
     inProgress,
     failed,
     rework,
+    recheckPassed,
     passRate,
     avgProcessTime: 1.2,
   };
@@ -73,17 +78,29 @@ export const useQualityStore = create<QualityState>((set, get) => ({
   updateCheckStatus: (id, status, result) => {
     const today = getTodayStr();
     set((state) => {
-      const updatedChecks = state.checks.map(c =>
-        c.id === id ? { ...c, status, result: result || c.result } : c
-      );
+      const oldCheck = state.checks.find(c => c.id === id);
+      const isRecheckPass = status === 'passed' && oldCheck && (oldCheck.reworkCount || 0) > 0;
+      
+      const updatedChecks = state.checks.map(c => {
+        if (c.id !== id) return c;
+        const reworkCount = c.reworkCount || 0;
+        return {
+          ...c,
+          status,
+          result: result || c.result,
+          reworkCount: status === 'rework' ? reworkCount + 1 : reworkCount,
+          isFirstCheck: c.isFirstCheck ?? (status === 'passed' || status === 'failed'),
+        };
+      });
       
       const updatedTrendData = state.trendData.map(item => {
         if (item.date === today) {
           return {
             ...item,
-            passed: status === 'passed' ? item.passed + 1 : item.passed,
+            passed: status === 'passed' && !isRecheckPass ? item.passed + 1 : item.passed,
             failed: status === 'failed' ? item.failed + 1 : item.failed,
             rework: status === 'rework' ? item.rework + 1 : item.rework,
+            recheckPassed: isRecheckPass ? (item.recheckPassed || 0) + 1 : item.recheckPassed || 0,
           };
         }
         return item;
@@ -93,9 +110,10 @@ export const useQualityStore = create<QualityState>((set, get) => ({
       if (!hasToday) {
         updatedTrendData.push({
           date: today,
-          passed: status === 'passed' ? 1 : 0,
+          passed: status === 'passed' && !isRecheckPass ? 1 : 0,
           failed: status === 'failed' ? 1 : 0,
           rework: status === 'rework' ? 1 : 0,
+          recheckPassed: isRecheckPass ? 1 : 0,
         });
       }
       
@@ -106,6 +124,12 @@ export const useQualityStore = create<QualityState>((set, get) => ({
     });
   },
   
+  updateCheckFields: (id, updates) => set((state) => ({
+    checks: state.checks.map(c =>
+      c.id === id ? { ...c, ...updates } : c
+    )
+  })),
+
   getChecksByType: (type) => {
     return get().checks.filter(c => c.type === type);
   },

@@ -17,6 +17,8 @@ import {
   ChevronUp,
   Users,
   AlertCircle,
+  AlertTriangle,
+  CheckCircle,
   Link2,
   Settings,
   BarChart3,
@@ -46,6 +48,12 @@ export const Schedule: React.FC = () => {
   });
   const [dateError, setDateError] = useState<string | null>(null);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const [impactAnalysis, setImpactAnalysis] = useState<{
+    visible: boolean;
+    affectedTasks: Task[];
+    newOutageEnd: string;
+    daysShift: number;
+  } | null>(null);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(task => {
@@ -97,13 +105,65 @@ export const Schedule: React.FC = () => {
         setDateError('工期至少为1天');
         return;
       }
-      updateTask(editingTask.id, {
-        ...editForm,
-        duration
-      });
+
+      const oldStartDate = new Date(editingTask.startDate);
+      const newStartDate = new Date(editForm.startDate);
+      const daysShift = Math.round((newStartDate.getTime() - oldStartDate.getTime()) / (1000 * 60 * 60 * 24));
+      const durationChange = duration - editingTask.duration;
+      const hasDateChange = daysShift !== 0 || durationChange !== 0;
+
+      if (hasDateChange) {
+        const affectedTasks: Task[] = [];
+        const visited = new Set<string>();
+        
+        const findAffected = (taskId: string) => {
+          if (visited.has(taskId)) return;
+          visited.add(taskId);
+          const downstream = tasks.filter(t => t.dependencies.includes(taskId));
+          for (const dep of downstream) {
+            if (!visited.has(dep.id)) {
+              affectedTasks.push(dep);
+              findAffected(dep.id);
+            }
+          }
+        };
+        findAffected(editingTask.id);
+
+        let newOutageEnd = currentOutage.endDate;
+        if (editingTask.isCritical && (daysShift > 0 || durationChange > 0)) {
+          const totalShift = daysShift > 0 ? daysShift : durationChange;
+          const endDate = new Date(currentOutage.endDate);
+          endDate.setDate(endDate.getDate() + totalShift);
+          newOutageEnd = endDate.toISOString().split('T')[0];
+        }
+
+        setImpactAnalysis({
+          visible: true,
+          affectedTasks,
+          newOutageEnd,
+          daysShift: (editingTask.isCritical && (daysShift > 0 || durationChange > 0))
+            ? (daysShift > 0 ? daysShift : durationChange) : 0,
+        });
+      } else {
+        updateTask(editingTask.id, { ...editForm, duration });
+        setEditingTask(null);
+        setDateError(null);
+      }
+    }
+  };
+
+  const handleConfirmImpact = () => {
+    if (editingTask) {
+      const duration = getDaysDiff(editForm.startDate, editForm.endDate) + 1;
+      updateTask(editingTask.id, { ...editForm, duration });
       setEditingTask(null);
       setDateError(null);
+      setImpactAnalysis(null);
     }
+  };
+
+  const handleCancelImpact = () => {
+    setImpactAnalysis(null);
   };
 
   const handleCancelEdit = () => {
@@ -588,6 +648,118 @@ export const Schedule: React.FC = () => {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {impactAnalysis && impactAnalysis.visible && editingTask && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={20} className="text-orange-500" />
+                <h3 className="font-semibold text-gray-800">工序时间变更影响分析</h3>
+              </div>
+              <button
+                onClick={handleCancelImpact}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-medium text-blue-800">变更工序</p>
+                <p className="text-lg font-bold text-blue-900 mt-1">{editingTask.name}</p>
+                <div className="flex items-center gap-4 mt-2 text-sm">
+                  <span className="text-blue-700">
+                    原计划：{editingTask.startDate} ~ {editingTask.endDate}（{editingTask.duration}天）
+                  </span>
+                  <span className="text-blue-500">→</span>
+                  <span className="text-blue-700 font-medium">
+                    新计划：{editForm.startDate} ~ {editForm.endDate}（{getDaysDiff(editForm.startDate, editForm.endDate) + 1}天）
+                  </span>
+                </div>
+                {editingTask.isCritical && (
+                  <span className="inline-flex items-center gap-1 mt-2 px-2 py-1 bg-orange-100 text-orange-700 text-xs font-medium rounded">
+                    <AlertCircle size={12} />
+                    关键路径工序
+                  </span>
+                )}
+              </div>
+
+              {impactAnalysis.daysShift > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={18} className="text-red-600" />
+                    <p className="text-sm font-medium text-red-800">
+                      大修结束日期可能延后 {impactAnalysis.daysShift} 天
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4 mt-2 text-sm text-red-700">
+                    <span>原结束日期：{currentOutage.endDate}</span>
+                    <span>→</span>
+                    <span className="font-medium">预计延后至：{impactAnalysis.newOutageEnd}</span>
+                  </div>
+                </div>
+              )}
+
+              {impactAnalysis.affectedTasks.length > 0 ? (
+                <div>
+                  <h4 className="font-semibold text-gray-800 mb-2">
+                    受影响的后续工序（{impactAnalysis.affectedTasks.length} 项）
+                  </h4>
+                  <div className="max-h-60 overflow-y-auto space-y-2">
+                    {impactAnalysis.affectedTasks.map(task => (
+                      <div
+                        key={task.id}
+                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                      >
+                        <div className="flex items-center gap-3">
+                          {task.isCritical && (
+                            <AlertCircle size={14} className="text-orange-500 flex-shrink-0" />
+                          )}
+                          <div>
+                            <p className="text-sm font-medium text-gray-800">{task.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {task.startDate} ~ {task.endDate}（{task.duration}天）
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {task.isCritical && (
+                            <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded">关键</span>
+                          )}
+                          <StatusBadge status={task.status} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle size={18} className="text-green-600" />
+                    <p className="text-sm font-medium text-green-800">无下游工序受影响</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={handleCancelImpact}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                取消修改
+              </button>
+              <button
+                onClick={handleConfirmImpact}
+                className="flex items-center gap-2 px-4 py-2 bg-[#0D47A1] text-white rounded-md hover:bg-[#0A3A87] transition-colors"
+              >
+                <Save size={16} />
+                确认保存
+              </button>
             </div>
           </div>
         </div>

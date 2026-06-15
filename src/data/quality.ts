@@ -154,17 +154,17 @@ export const mockQualityChecks: QualityCheck[] = [
 ];
 
 export const qualityTrendData = [
-  { date: '06-05', passed: 2, failed: 0, rework: 0 },
-  { date: '06-06', passed: 1, failed: 0, rework: 0 },
-  { date: '06-07', passed: 1, failed: 0, rework: 0 },
-  { date: '06-08', passed: 0, failed: 0, rework: 0 },
-  { date: '06-09', passed: 0, failed: 0, rework: 0 },
-  { date: '06-10', passed: 1, failed: 0, rework: 0 },
-  { date: '06-11', passed: 1, failed: 0, rework: 0 },
-  { date: '06-12', passed: 0, failed: 0, rework: 0 },
-  { date: '06-13', passed: 0, failed: 0, rework: 0 },
-  { date: '06-14', passed: 0, failed: 0, rework: 0 },
-  { date: '06-15', passed: 0, failed: 0, rework: 0 },
+  { date: '06-05', passed: 2, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-06', passed: 1, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-07', passed: 1, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-08', passed: 0, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-09', passed: 0, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-10', passed: 1, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-11', passed: 1, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-12', passed: 0, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-13', passed: 0, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-14', passed: 0, failed: 0, rework: 0, recheckPassed: 0 },
+  { date: '06-15', passed: 0, failed: 0, rework: 0, recheckPassed: 0 },
 ];
 
 export const qualityStatistics = {
